@@ -621,26 +621,38 @@
                             seen[key] = true;
 
                             var playUrl = m ? item.link.replace(/\[[\d,]*\]/i, q) : item.link;
-                            var sizeMB = calculateSizeBytes(q, runtime);
+                            var meta = parseStreamMetadata(voice, playUrl, q);
 
                             streams.push({
                                 voice: voice,
+                                meta: meta,
                                 quality: q >= 2160 ? '4K UHD' : q + 'p',
                                 raw_quality: q,
-                                size_mb: sizeMB,
-                                size: showSize ? formatSize(sizeMB) : '',
                                 url: playUrl
                             });
                         });
                     });
 
-                    // Обов'язкове сортування від більшого файлу до меншого
+                    // Сортування: від найкращої якості з пріоритетом на українську мову
                     streams.sort(function (a, b) {
-                        if (b.size_mb !== a.size_mb) return b.size_mb - a.size_mb;
+                        // 1. Роздільна здатність (2160 -> 1440 -> 1080 -> 720 -> 480)
                         if (b.raw_quality !== a.raw_quality) return b.raw_quality - a.raw_quality;
+
+                        // 2. Усередині тієї ж якості: український дубляж/озвучення першими
                         var aUa = isUkrainian(a.voice) ? 1 : 0;
                         var bUa = isUkrainian(b.voice) ? 1 : 0;
                         if (bUa !== aUa) return bUa - aUa;
+
+                        // 3. HDR / Dolby Vision вище SDR
+                        var aHdr = (a.meta && (a.meta.color === 'DV' || a.meta.color === 'HDR10+' || a.meta.color === 'HDR')) ? 1 : 0;
+                        var bHdr = (b.meta && (b.meta.color === 'DV' || b.meta.color === 'HDR10+' || b.meta.color === 'HDR')) ? 1 : 0;
+                        if (bHdr !== aHdr) return bHdr - aHdr;
+
+                        // 4. Багатоканальний звук (5.1 CH / ATMOS) вище звичайного
+                        var aAudio = (a.meta && (a.meta.audio === 'ATMOS' || a.meta.audio === '5.1 CH')) ? 1 : 0;
+                        var bAudio = (b.meta && (b.meta.audio === 'ATMOS' || b.meta.audio === '5.1 CH')) ? 1 : 0;
+                        if (bAudio !== aAudio) return bAudio - aAudio;
+
                         return (a.voice || '').localeCompare(b.voice || '');
                     });
 
@@ -916,7 +928,46 @@
             var seasons = data.seasons;
             var currentSeasonIdx = 0;
             var currentVoiceIdx = 0;
-            var currentQuality = 1080;
+            var currentQuality = Lampa.Storage.get('customs_filmix_last_quality', 1080);
+
+            // Відновлення збереженого вибору для цього серіалу
+            var seriesStoreKey = 'customs_filmix_series_' + movie.id;
+            var savedState = Lampa.Storage.get(seriesStoreKey, null);
+            if (savedState) {
+                if (savedState.seasonId !== undefined) {
+                    for (var si = 0; si < seasons.length; si++) {
+                        if (seasons[si].id === savedState.seasonId || seasons[si].title === savedState.seasonTitle) {
+                            currentSeasonIdx = si;
+                            break;
+                        }
+                    }
+                }
+                var curSeason = seasons[currentSeasonIdx];
+                if (curSeason && curSeason.voices && savedState.voiceName) {
+                    for (var vi = 0; vi < curSeason.voices.length; vi++) {
+                        if (curSeason.voices[vi].name === savedState.voiceName) {
+                            currentVoiceIdx = vi;
+                            break;
+                        }
+                    }
+                }
+                if (savedState.quality) {
+                    currentQuality = savedState.quality;
+                }
+            }
+
+            function saveFilterState() {
+                var s = seasons[currentSeasonIdx];
+                var v = s && s.voices && s.voices[currentVoiceIdx];
+                if (!s || !v) return;
+                Lampa.Storage.set(seriesStoreKey, {
+                    seasonId: s.id,
+                    seasonTitle: s.title,
+                    voiceName: v.name,
+                    quality: currentQuality
+                });
+                Lampa.Storage.set('customs_filmix_last_quality', currentQuality);
+            }
 
             function updateQualityForVoice() {
                 var s = seasons[currentSeasonIdx];
@@ -1004,6 +1055,7 @@
                         }
                         currentVoiceIdx = matchedVoice;
                         updateQualityForVoice();
+                        saveFilterState();
                         updateFilterLabels();
                         renderEpisodes();
                         row.toggle();
@@ -1031,6 +1083,7 @@
                     onSelect: function (item) {
                         currentVoiceIdx = item.index;
                         updateQualityForVoice();
+                        saveFilterState();
                         updateFilterLabels();
                         renderEpisodes();
                         row.toggle();
@@ -1059,12 +1112,19 @@
                     },
                     onSelect: function (item) {
                         currentQuality = item.quality;
+                        saveFilterState();
                         updateFilterLabels();
                         renderEpisodes();
                         row.toggle();
                     }
                 });
             });
+
+            function getEpisodeHash(ep, movie) {
+                if (!Lampa.Utils || !Lampa.Utils.hash) return '';
+                var orig = movie.original_title || movie.original_name || movie.title || movie.name || '';
+                return Lampa.Utils.hash([ep.season, ep.season > 10 ? ':' : '', ep.episode, orig].join(''));
+            }
 
             function renderEpisodes() {
                 scroll.clear();
@@ -1076,9 +1136,7 @@
                 var episodes = v.episodes;
 
                 var showSize = flag('customs_filmix_show_size', true);
-                var epRuntime = parseInt(movie.runtime) || ((movie.episode_run_time && movie.episode_run_time[0]) ? parseInt(movie.episode_run_time[0]) : 45);
-                var sizeMB = calculateSizeBytes(currentQuality, epRuntime);
-                var formattedSize = showSize ? formatSize(sizeMB) : '';
+                var formattedSize = showSize ? 'Онлайн' : '';
                 var seriesStyle = Lampa.Storage.get('customs_filmix_series_style', 'cinema');
 
                 var cachedTmdb = tmdbSeasonCache[movie.id + '_' + s.id] || null;
@@ -1088,9 +1146,17 @@
                     var meta = parseStreamMetadata(v.name, playUrl, currentQuality);
                     var qClass = currentQuality >= 2160 ? 'q-4k' : (currentQuality >= 1440 ? 'q-1440' : (currentQuality >= 1080 ? 'q-1080' : (currentQuality >= 720 ? 'q-720' : 'q-480')));
 
-                    var hash = (Lampa.Utils && Lampa.Utils.hash) ? Lampa.Utils.hash([ep.season, ep.season > 10 ? ':' : '', ep.episode, movie.original_title || movie.title].join('')) : '';
-                    var timelineView = (hash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(hash) : null;
-                    var progressHtml = (timelineView && timelineView.percent) ? '<div class="customs-filmix-item__progress" style="width:' + Math.min(100, Math.round(timelineView.percent)) + '%"></div>' : '';
+                    var epHash = getEpisodeHash(ep, movie);
+                    var timelineView = (epHash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(epHash) : null;
+                    var pct = 0;
+                    if (timelineView) {
+                        if (typeof timelineView.percent === 'number' && timelineView.percent > 0) {
+                            pct = timelineView.percent;
+                        } else if (timelineView.time && timelineView.duration) {
+                            pct = (timelineView.time / timelineView.duration) * 100;
+                        }
+                    }
+                    var progressHtml = (pct > 0) ? '<div class="customs-filmix-item__progress" style="width:' + Math.min(100, Math.round(pct)) + '%"></div>' : '';
 
                     var epInfo = cachedTmdb ? cachedTmdb[ep.episode] : null;
                     var epTitle = (epInfo && epInfo.name) ? (ep.episode + '. ' + epInfo.name) : (ep.episode + ' серія');
@@ -1207,7 +1273,7 @@
                         last = el[0];
                         scroll.update(el, true);
 
-                        if (!probed && playUrl && playUrl.indexOf('http') === 0) {
+                        if (!probed && playUrl && playUrl.indexOf('http') === 0 && showSize) {
                             probed = true;
                             probeFileSize(playUrl, function (bytes) {
                                 var mb = bytes / (1024 * 1024);
@@ -1224,20 +1290,23 @@
                         var info = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][ep.episode]) || null;
                         var curTitle = (info && info.name) ? (ep.episode + '. ' + info.name) : (ep.episode + ' серія');
 
+                        var epTimeline = (epHash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(epHash) : { hash: epHash };
                         var first = {
                             title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + curTitle + ' [' + meta.qLabel + ']',
                             url: playUrl,
-                            timeline: movie.timeline
+                            timeline: epTimeline
                         };
 
                         var playlist = episodes.map(function (e) {
                             var eUrl = e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, currentQuality) : e.link;
                             var eInfo = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][e.episode]) || null;
                             var eTitle = (eInfo && eInfo.name) ? (e.episode + '. ' + eInfo.name) : (e.episode + ' серія');
+                            var eHash = getEpisodeHash(e, movie);
+                            var eTimeline = (eHash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(eHash) : { hash: eHash };
                             return {
                                 title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + eTitle + ' [' + meta.qLabel + ']',
                                 url: eUrl,
-                                timeline: movie.timeline
+                                timeline: eTimeline
                             };
                         });
 
@@ -1310,15 +1379,21 @@
                     '</div>' +
                 '</div>');
 
+                var showSize = flag('customs_filmix_show_size', true);
                 el.find('.customs-filmix-item__voice').text(meta.cleanVoice).attr('title', v.voice);
-                el.find('.customs-filmix-item__size').text(v.size || 'Онлайн');
+                el.find('.customs-filmix-item__size').text(showSize ? 'Онлайн' : '');
+
+                var movPct = (movie.timeline && movie.timeline.percent) ? movie.timeline.percent : 0;
+                if (movPct > 0) {
+                    el.append('<div class="customs-filmix-item__progress" style="width:' + Math.min(100, Math.round(movPct)) + '%"></div>');
+                }
 
                 var probed = false;
                 el.on('hover:focus', function () {
                     last = el[0];
                     scroll.update(el, true);
 
-                    if (!probed && v.url && v.url.indexOf('http') === 0) {
+                    if (!probed && v.url && v.url.indexOf('http') === 0 && showSize) {
                         probed = true;
                         probeFileSize(v.url, function (bytes) {
                             var mb = bytes / (1024 * 1024);
