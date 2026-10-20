@@ -463,17 +463,23 @@
         return (str || '').replace(/[\s.,:;’'`!?]+/g, ' ').trim();
     }
 
-    function calculateSize(quality, runtimeMinutes) {
-        if (!runtimeMinutes) runtimeMinutes = 115;
+    function getStreamBitrate(quality) {
         var q = parseInt(quality) || 1080;
-        var bitrate = 5000;
-        if (q >= 2160) bitrate = 20000;
-        else if (q >= 1440) bitrate = 11000;
-        else if (q >= 1080) bitrate = 5500;
-        else if (q >= 720) bitrate = 2400;
-        else bitrate = 1200;
+        if (q >= 2160) return 20000;
+        if (q >= 1440) return 11000;
+        if (q >= 1080) return 5500;
+        if (q >= 720) return 2400;
+        return 1200;
+    }
 
-        var sizeMB = (bitrate * (runtimeMinutes * 60)) / (8 * 1024);
+    function calculateSizeBytes(quality, runtimeMinutes) {
+        var bitrate = getStreamBitrate(quality);
+        var minutes = runtimeMinutes || 115;
+        return (bitrate * (minutes * 60)) / (8 * 1024);
+    }
+
+    function formatSize(sizeMB) {
+        if (!sizeMB || sizeMB <= 0) return '';
         if (sizeMB >= 1024) return (sizeMB / 1024).toFixed(1) + ' ГБ';
         return Math.round(sizeMB) + ' МБ';
     }
@@ -565,11 +571,13 @@
             var streams = [];
             var maxQ = (window.mod_filmix && window.mod_filmix.max_qualitie) || 2160;
             var showSize = flag('customs_filmix_show_size', true);
+            var runtime = parseInt(movie.runtime) || ((movie.episode_run_time && movie.episode_run_time[0]) ? parseInt(movie.episode_run_time[0]) : 115);
+            var seen = {};
 
             if (data && data.player_links) {
                 var pl = data.player_links;
                 if (pl.movie && pl.movie.length) {
-                    // Фільми
+                    // Фільми: доступні переклади та варіанти якості
                     pl.movie.forEach(function (item) {
                         if (!item || !item.link || item.translation === 'Заблокировано правообладателем!') return;
 
@@ -580,20 +588,37 @@
                             qualities.sort(function (a, b) { return b - a; });
                         }
 
-                        if (!qualities.length) qualities = [720];
-                        var bestQ = qualities[0];
-                        var playUrl = item.link.replace(/\[[\d,]*\]/i, bestQ);
+                        if (!qualities.length) {
+                            var qm = item.link.match(/(?:_|\/)(2160|1440|1080|720|480)(?:p|v|\.mp4)/i);
+                            if (qm) qualities = [parseInt(qm[1])];
+                            else qualities = [720];
+                        }
 
-                        streams.push({
-                            voice: item.translation || 'Оригінал / Дубляж',
-                            quality: bestQ >= 2160 ? '4K UHD' : bestQ + 'p',
-                            raw_quality: bestQ,
-                            url: playUrl,
-                            size: showSize ? calculateSize(bestQ, movie.runtime) : ''
+                        // Пріоритет високої чіткості (>= 720p), 480p додається якщо немає вищої якості
+                        var highQ = qualities.filter(function (q) { return q >= 720; });
+                        var finalQualities = highQ.length ? highQ : qualities;
+
+                        finalQualities.forEach(function (q) {
+                            var voice = item.translation || 'Оригінал / Дубляж';
+                            var key = voice + '_' + q;
+                            if (seen[key]) return;
+                            seen[key] = true;
+
+                            var playUrl = m ? item.link.replace(/\[[\d,]*\]/i, q) : item.link;
+                            var sizeMB = calculateSizeBytes(q, runtime);
+
+                            streams.push({
+                                voice: voice,
+                                quality: q >= 2160 ? '4K UHD' : q + 'p',
+                                raw_quality: q,
+                                size_mb: sizeMB,
+                                size: showSize ? formatSize(sizeMB) : '',
+                                url: playUrl
+                            });
                         });
                     });
                 } else if (pl.playlist && Object.keys(pl.playlist).length > 0) {
-                    // Серіали: доступні переклади з запуском першої серії
+                    // Серіали: доступні варіанти перекладу з першою серією
                     var sKeys = Object.keys(pl.playlist);
                     var s1 = pl.playlist[sKeys[0]];
                     if (s1) {
@@ -604,20 +629,54 @@
                             if (ep1 && ep1.link) {
                                 var qList = (ep1.qualities || []).filter(function (q) { return q <= maxQ; });
                                 qList.sort(function (a, b) { return b - a; });
-                                var bestQ = qList[0] || 720;
-                                var playUrl = ep1.link.indexOf('%s') !== -1 ? ep1.link.replace(/%s/i, bestQ) : ep1.link;
-                                streams.push({
-                                   voice: vKey,
-                                   quality: bestQ >= 2160 ? '4K UHD' : bestQ + 'p',
-                                   raw_quality: bestQ,
-                                   url: playUrl,
-                                   size: ''
+                                if (!qList.length) qList = [720];
+
+                                var highQSeries = qList.filter(function (q) { return q >= 720; });
+                                var finalQSeries = highQSeries.length ? highQSeries : qList;
+
+                                finalQSeries.forEach(function (q) {
+                                    var key = vKey + '_' + q;
+                                    if (seen[key]) return;
+                                    seen[key] = true;
+
+                                    var playUrl = ep1.link.indexOf('%s') !== -1 ? ep1.link.replace(/%s/i, q) : ep1.link;
+                                    var sizeMB = calculateSizeBytes(q, runtime);
+
+                                    streams.push({
+                                        voice: vKey,
+                                        quality: q >= 2160 ? '4K UHD' : q + 'p',
+                                        raw_quality: q,
+                                        size_mb: sizeMB,
+                                        size: showSize ? formatSize(sizeMB) : '',
+                                        url: playUrl
+                                    });
                                 });
                             }
                         }
                     }
                 }
             }
+
+            // Обов'язкове сортування від більшого файлу до меншого
+            streams.sort(function (a, b) {
+                // 1. Від більшого файлу до меншого
+                if (b.size_mb !== a.size_mb) {
+                    return b.size_mb - a.size_mb;
+                }
+                // 2. Якщо раптом однаковий розмір — за якістю відео
+                if (b.raw_quality !== a.raw_quality) {
+                    return b.raw_quality - a.raw_quality;
+                }
+                // 3. Пріоритет української озвучки при однаковому розмірі
+                var aUa = isUkrainian(a.voice) ? 1 : 0;
+                var bUa = isUkrainian(b.voice) ? 1 : 0;
+                if (bUa !== aUa) {
+                    return bUa - aUa;
+                }
+                // 4. За назвою перекладу
+                return (a.voice || '').localeCompare(b.voice || '');
+            });
+
             done(streams);
         }, function () {
             done([]);
@@ -626,14 +685,14 @@
 
     function createFilmixRow(list, movie) {
         var row = new Lampa.Emit();
-        var html = Lampa.Template.get('items_line', { title: 'Filmix — Швидкий перегляд' });
+        var html = Lampa.Template.get('items_line', { title: 'Filmix — Доступні відео' });
         var scroll = new Lampa.Scroll({ horizontal: true, step: 260 });
         var last = null;
 
         html.addClass('customs-filmix');
 
         list.forEach(function (v) {
-            var qClass = v.raw_quality >= 2160 ? 'q-4k' : (v.raw_quality >= 1080 ? 'q-1080' : 'q-720');
+            var qClass = v.raw_quality >= 2160 ? 'q-4k' : (v.raw_quality >= 1440 ? 'q-1440' : (v.raw_quality >= 1080 ? 'q-1080' : (v.raw_quality >= 720 ? 'q-720' : 'q-480')));
             var el = $('<div class="customs-filmix-item selector">' +
                 '<div class="customs-filmix-item__inner">' +
                     '<div class="customs-filmix-item__voice"></div>' +
@@ -705,25 +764,14 @@
 
     // ---------- Вставка рядків на сторінку ----------
 
-    // Вставка рядка відразу після потрібного елемента
-    function insertRowAfter(link, row, rowName, afterRowName) {
+    // 1. Filmix: ЗАВЖДИ ПЕРШИМ під обкладинкою та кнопками (позиція №1)
+    function insertFilmixRow(link, row) {
         var first = link.items && link.items[0];
         if (!first || !link.rows) return;
+        if (link.rows.indexOf(ROW_FILMIX) !== -1) return;
 
-        // За замовчуванням вставляємо на 1-шу позицію (відразу під обкладинкою та кнопками)
+        var startDom = first.render(true);
         var insertIndex = 1;
-        var anchorNode = first.render(true);
-
-        if (afterRowName) {
-            var existingIdx = link.rows.indexOf(afterRowName);
-            if (existingIdx !== -1 && link.items[existingIdx]) {
-                insertIndex = existingIdx + 1;
-                anchorNode = link.items[existingIdx].render(true);
-            }
-        }
-
-        // Запобігаємо повторному додаванню
-        if (link.rows.indexOf(rowName) !== -1) return;
 
         row.use({
             onDown: link.emit.bind(link, 'down'),
@@ -734,12 +782,49 @@
             onToggle: function () { link.scroll.update(row.render(true)); }
         });
 
-        if (anchorNode && anchorNode.parentNode) {
-            anchorNode.parentNode.insertBefore(row.render(true), anchorNode.nextSibling);
+        if (startDom && startDom.parentNode) {
+            startDom.parentNode.insertBefore(row.render(true), startDom.nextSibling);
         }
 
         link.items.splice(insertIndex, 0, row);
-        link.rows.splice(insertIndex, 0, rowName);
+        link.rows.splice(insertIndex, 0, ROW_FILMIX);
+        if (link.active >= insertIndex) link.active++;
+
+        if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(link.scroll.render(true));
+    }
+
+    // 2. Трейлери: ЗАВЖДИ ДРУГИМИ (слідом за Filmix)
+    function insertTrailersRow(link, row) {
+        var first = link.items && link.items[0];
+        if (!first || !link.rows) return;
+        if (link.rows.indexOf(ROW_TRAILERS) !== -1) return;
+
+        var startDom = first.render(true);
+        var filmixIdx = link.rows.indexOf(ROW_FILMIX);
+        var insertIndex = 1;
+        var anchorDom = startDom;
+
+        // Якщо Filmix вже є на сторінці — вставляємо після Filmix
+        if (filmixIdx !== -1 && link.items[filmixIdx]) {
+            insertIndex = filmixIdx + 1;
+            anchorDom = link.items[filmixIdx].render(true);
+        }
+
+        row.use({
+            onDown: link.emit.bind(link, 'down'),
+            onUp: link.emit.bind(link, 'up'),
+            onBack: link.emit.bind(link, 'back'),
+            onLeft: link.emit.bind(link, 'left'),
+            onActive: function () { link.active = link.items.indexOf(row); },
+            onToggle: function () { link.scroll.update(row.render(true)); }
+        });
+
+        if (anchorDom && anchorDom.parentNode) {
+            anchorDom.parentNode.insertBefore(row.render(true), anchorDom.nextSibling);
+        }
+
+        link.items.splice(insertIndex, 0, row);
+        link.rows.splice(insertIndex, 0, ROW_TRAILERS);
         if (link.active >= insertIndex) link.active++;
 
         if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(link.scroll.render(true));
@@ -755,23 +840,23 @@
         var page = e.body && e.body[0];
         var network = new Lampa.Reguest();
 
-        // 1. Трейлери: ЗАВЖДИ відразу під обкладинкою (позиція 1)
+        // 1. Filmix файли: ПЕРШІ у списку (відразу під обкладинкою)
+        if (flag('customs_filmix_enabled', true)) {
+            searchFilmix(movie, function (streams) {
+                if (!streams.length || !page || !document.body.contains(page)) return;
+                insertFilmixRow(e.link, createFilmixRow(streams, movie));
+            });
+        }
+
+        // 2. Трейлери: ДРУГІ у списку (слідом за Filmix)
         if (flag('customs_trailers_enabled', true)) {
             var langs = enabledLangs();
             if (langs.length) {
                 loadTrailers(network, method, movie.id, langs, function (list) {
                     if (!list.length || !page || !document.body.contains(page)) return;
-                    insertRowAfter(e.link, createTrailersRow(list, langs), ROW_TRAILERS, null);
+                    insertTrailersRow(e.link, createTrailersRow(list, langs));
                 });
             }
-        }
-
-        // 2. Filmix: відразу після трейлерів (або під обкладинкою, якщо трейлерів немає)
-        if (flag('customs_filmix_enabled', true)) {
-            searchFilmix(movie, function (streams) {
-                if (!streams.length || !page || !document.body.contains(page)) return;
-                insertRowAfter(e.link, createFilmixRow(streams, movie), ROW_FILMIX, ROW_TRAILERS);
-            });
         }
     }
 
@@ -808,8 +893,10 @@
             '.customs-filmix-item__meta{display:flex;align-items:center;justify-content:space-between;gap:0.5em;font-size:0.85em;}',
             '.customs-filmix-item__quality{font-weight:700;padding:0.15em 0.5em;border-radius:0.4em;font-size:0.85em;}',
             '.customs-filmix-item__quality.q-4k{background:#d4af37;color:#000;}',
+            '.customs-filmix-item__quality.q-1440{background:#9b59b6;color:#fff;}',
             '.customs-filmix-item__quality.q-1080{background:#0078d4;color:#fff;}',
             '.customs-filmix-item__quality.q-720{background:#555;color:#eee;}',
+            '.customs-filmix-item__quality.q-480{background:#333;color:#bbb;}',
             '.customs-filmix-item__size{color:#46d369;font-weight:600;}'
         ].join('\n');
 
