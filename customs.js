@@ -883,7 +883,7 @@
             var map = {};
             if (json && Array.isArray(json.episodes)) {
                 json.episodes.forEach(function (ep) {
-                    var still = ep.still_path ? ('https://image.tmdb.org/t/p/w300' + ep.still_path) : '';
+                    var still = ep.still_path ? ('https://image.tmdb.org/t/p/w500' + ep.still_path) : '';
                     map[ep.episode_number] = {
                         name: ep.name || '',
                         still: still,
@@ -1513,21 +1513,21 @@
             /* Filmix стрічка: Glassmorphism Cinema (Apple TV Style) */
             '.customs-filmix .scroll__body{display:flex;}',
             '.customs-filmix .scroll__content{padding-top:.6em;padding-bottom:.8em;}',
-            '.customs-filmix-filter-bar{display:flex;align-items:center;gap:.6em;padding:.2em 0 .8em 0;flex-wrap:wrap;}',
-            '.customs-filmix-filter-btn{display:inline-flex;align-items:center;gap:.45em;padding:.42em .85em;' +
+            '.customs-filmix-filter-bar{display:flex;align-items:center;gap:.75em;padding:.4em 1.5em 1.1em 1.5em;flex-wrap:wrap;}',
+            '.customs-filmix-filter-btn{display:inline-flex;align-items:center;gap:.65em;padding:.62em 1.2em;' +
                 'background:linear-gradient(135deg,rgba(255,255,255,0.11) 0%,rgba(255,255,255,0.03) 100%);' +
                 '-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);' +
-                'border:1px solid rgba(255,255,255,0.16);border-radius:.75em;cursor:pointer;' +
-                'font-size:.82em;color:rgba(255,255,255,0.9);' +
+                'border:1px solid rgba(255,255,255,0.16);border-radius:.85em;cursor:pointer;' +
+                'font-size:1.05em;color:rgba(255,255,255,0.9);' +
                 'box-shadow:inset 0 1px 1px rgba(255,255,255,0.12),0 2px 8px rgba(0,0,0,0.25);' +
                 'transition:transform .2s cubic-bezier(0.16,1,0.3,1),background .2s cubic-bezier(0.16,1,0.3,1),box-shadow .2s cubic-bezier(0.16,1,0.3,1),border-color .2s cubic-bezier(0.16,1,0.3,1);}',
             '.customs-filmix-filter-btn.focus{background:linear-gradient(135deg,rgba(255,255,255,0.28) 0%,rgba(255,255,255,0.12) 100%);' +
                 'border-color:rgba(255,255,255,0.8);box-shadow:0 0 20px rgba(255,255,255,0.35),inset 0 1px 2px rgba(255,255,255,0.5);' +
                 'transform:scale(1.05);color:#fff;z-index:2;}',
-            '.customs-filmix-filter-icon{width:1.15em;height:1.15em;stroke:currentColor;flex-shrink:0;opacity:.85;}',
+            '.customs-filmix-filter-icon{width:1.35em;height:1.35em;stroke:currentColor;flex-shrink:0;opacity:.85;}',
             '.customs-filmix-filter-label{color:rgba(255,255,255,0.55);font-weight:500;}',
             '.customs-filmix-filter-val{font-weight:700;color:#fff;}',
-            '.customs-filmix-filter-arrow{width:.85em;height:.85em;stroke:currentColor;opacity:.6;margin-left:.1em;flex-shrink:0;}',
+            '.customs-filmix-filter-arrow{width:.95em;height:.95em;stroke:currentColor;opacity:.6;margin-left:.1em;flex-shrink:0;}',
             '.customs-filmix-item{position:relative;flex-shrink:0;width:18.5em;margin-right:1.2em;' +
                 'background:linear-gradient(135deg,rgba(255,255,255,0.11) 0%,rgba(255,255,255,0.03) 100%);' +
                 '-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);' +
