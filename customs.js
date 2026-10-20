@@ -1122,8 +1122,17 @@
 
             function getEpisodeHash(ep, movie) {
                 if (!Lampa.Utils || !Lampa.Utils.hash) return '';
-                var orig = movie.original_title || movie.original_name || movie.title || movie.name || '';
+                var orig = movie.original_name || movie.original_title || movie.name || movie.title || '';
                 return Lampa.Utils.hash([ep.season, ep.season > 10 ? ':' : '', ep.episode, orig].join(''));
+            }
+
+            function getEpisodeTimeline(ep, movie) {
+                var hash = getEpisodeHash(ep, movie);
+                var metaLink = (Lampa.Timeline && Lampa.Timeline.link) ? Lampa.Timeline.link(movie, ep.season, ep.episode) : null;
+                if (hash && Lampa.Timeline && Lampa.Timeline.view) {
+                    return Lampa.Timeline.view(hash, metaLink);
+                }
+                return { hash: hash, percent: 0, time: 0, duration: 0 };
             }
 
             function renderEpisodes() {
@@ -1147,7 +1156,7 @@
                     var qClass = currentQuality >= 2160 ? 'q-4k' : (currentQuality >= 1440 ? 'q-1440' : (currentQuality >= 1080 ? 'q-1080' : (currentQuality >= 720 ? 'q-720' : 'q-480')));
 
                     var epHash = getEpisodeHash(ep, movie);
-                    var timelineView = (epHash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(epHash) : null;
+                    var timelineView = getEpisodeTimeline(ep, movie);
                     var pct = 0;
                     if (timelineView) {
                         if (typeof timelineView.percent === 'number' && timelineView.percent > 0) {
@@ -1156,7 +1165,8 @@
                             pct = (timelineView.time / timelineView.duration) * 100;
                         }
                     }
-                    var progressHtml = (pct > 0) ? '<div class="customs-filmix-item__progress" style="width:' + Math.min(100, Math.round(pct)) + '%"></div>' : '';
+                    var hideClass = (pct > 0) ? '' : ' hide';
+                    var progressHtml = '<div class="customs-filmix-item__progress time-line' + hideClass + '" data-hash="' + epHash + '"><div style="width:' + Math.min(100, Math.round(pct)) + '%"></div></div>';
 
                     var epInfo = cachedTmdb ? cachedTmdb[ep.episode] : null;
                     var epTitle = (epInfo && epInfo.name) ? (ep.episode + '. ' + epInfo.name) : (ep.episode + ' серія');
@@ -1290,10 +1300,12 @@
                         var info = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][ep.episode]) || null;
                         var curTitle = (info && info.name) ? (ep.episode + '. ' + info.name) : (ep.episode + ' серія');
 
-                        var epTimeline = (epHash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(epHash) : { hash: epHash };
+                        var epTimeline = getEpisodeTimeline(ep, movie);
                         var first = {
                             title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + curTitle + ' [' + meta.qLabel + ']',
                             url: playUrl,
+                            season: ep.season,
+                            episode: ep.episode,
                             timeline: epTimeline
                         };
 
@@ -1301,15 +1313,19 @@
                             var eUrl = e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, currentQuality) : e.link;
                             var eInfo = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][e.episode]) || null;
                             var eTitle = (eInfo && eInfo.name) ? (e.episode + '. ' + eInfo.name) : (e.episode + ' серія');
-                            var eHash = getEpisodeHash(e, movie);
-                            var eTimeline = (eHash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(eHash) : { hash: eHash };
+                            var eTimeline = getEpisodeTimeline(e, movie);
                             return {
                                 title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + eTitle + ' [' + meta.qLabel + ']',
                                 url: eUrl,
+                                season: e.season,
+                                episode: e.episode,
                                 timeline: eTimeline
                             };
                         });
 
+                        if (playlist.length > 1) {
+                            first.playlist = playlist;
+                        }
                         Lampa.Player.play(first);
                         if (Lampa.Player.playlist) {
                             Lampa.Player.playlist(playlist);
@@ -1383,10 +1399,19 @@
                 el.find('.customs-filmix-item__voice').text(meta.cleanVoice).attr('title', v.voice);
                 el.find('.customs-filmix-item__size').text(showSize ? 'Онлайн' : '');
 
-                var movPct = (movie.timeline && movie.timeline.percent) ? movie.timeline.percent : 0;
-                if (movPct > 0) {
-                    el.append('<div class="customs-filmix-item__progress" style="width:' + Math.min(100, Math.round(movPct)) + '%"></div>');
+                var movHash = (Lampa.Utils && Lampa.Utils.hash) ? Lampa.Utils.hash(movie.original_title || movie.title || movie.name || '') : '';
+                var movMeta = (Lampa.Timeline && Lampa.Timeline.link) ? Lampa.Timeline.link(movie) : null;
+                var movTimeline = (movHash && Lampa.Timeline && Lampa.Timeline.view) ? Lampa.Timeline.view(movHash, movMeta) : (movie.timeline || null);
+                var movPct = 0;
+                if (movTimeline) {
+                    if (typeof movTimeline.percent === 'number' && movTimeline.percent > 0) {
+                        movPct = movTimeline.percent;
+                    } else if (movTimeline.time && movTimeline.duration) {
+                        movPct = (movTimeline.time / movTimeline.duration) * 100;
+                    }
                 }
+                var movHideClass = (movPct > 0) ? '' : ' hide';
+                el.append('<div class="customs-filmix-item__progress time-line' + movHideClass + '" data-hash="' + movHash + '"><div style="width:' + Math.min(100, Math.round(movPct)) + '%"></div></div>');
 
                 var probed = false;
                 el.on('hover:focus', function () {
@@ -1411,7 +1436,7 @@
                     Lampa.Player.play({
                         title: (movie.title || movie.name) + ' — ' + v.voice + ' [' + meta.qLabel + ']',
                         url: v.url,
-                        timeline: movie.timeline
+                        timeline: movTimeline || movie.timeline
                     });
                 });
 
@@ -1644,8 +1669,9 @@
             '.customs-filmix-item__icon{width:1.1em;height:1.1em;flex-shrink:0;}',
             '.customs-filmix-item__action{display:flex;align-items:center;gap:.3em;color:rgba(255,255,255,0.65);font-weight:600;font-size:.9em;transition:color .2s ease;}',
             '.customs-filmix-item.focus .customs-filmix-item__action{color:#fbbf24;}',
-            '.customs-filmix-item__play-icon{width:.9em;height:.9em;fill:currentColor;flex-shrink:0;}',
-            '.customs-filmix-item__progress{position:absolute;bottom:0;left:0;height:3px;background:#3b82f6;border-radius:0 0 1em 1em;}',
+            '.customs-filmix-item__progress.time-line{margin:0;position:absolute;bottom:0;left:0;right:0;width:100%;height:3px;background:rgba(255,255,255,0.15);overflow:hidden;border-radius:0 0 1em 1em;pointer-events:none;}',
+            '.customs-filmix-item__progress.time-line.hide{display:none;}',
+            '.customs-filmix-item__progress.time-line > div{height:100%;background:#3b82f6;border-radius:0 0 1em 1em;transition:width .2s ease;}',
 
             /* 1. Варіант Cinema (Apple TV Style) */
             '.customs-filmix-item--cinema{width:19.5em;padding:0;overflow:hidden;display:flex;flex-direction:column;}',
