@@ -1,8 +1,8 @@
 /*
- * Lampa Customs
- * 1. Трейлери для Lampa: українською, а за вибором у налаштуваннях — ще російською й англійською (TMDB + YouTube).
- * 2. Filmix швидкий перегляд: стрічка доступних варіантів відео (озвучка, якість 4K/1080p/720p, орієнтовний розмір) з миттєвим запуском.
- * ES5 синтаксис — для стабільної роботи на Smart TV (Tizen, webOS, Android TV).
+ * Lampa Customs (customs.js)
+ * 1. Стрічка трейлерів: TMDB (UA, RU, EN) + YouTube резерв (відразу під обкладинкою).
+ * 2. Filmix швидкий перегляд: доступні варіанти озвучки, якість (4K/1080p/720p), орієнтовний розмір файлу та прямий запуск.
+ * Сумісність з ES5 для телевізорів (Tizen, webOS, Android TV).
  */
 (function () {
     'use strict';
@@ -91,25 +91,6 @@
                 '</svg>'
         });
 
-        // Розділ: Filmix швидкий перегляд
-        Lampa.SettingsApi.addParam({
-            component: COMPONENT_NAME,
-            param: { name: 'customs_title_filmix', type: 'title' },
-            field: { name: 'Filmix (Швидкий перегляд)' }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: COMPONENT_NAME,
-            param: { name: 'customs_filmix_enabled', type: 'trigger', default: true },
-            field: { name: 'Стрічка відео Filmix', description: 'Показувати доступні відео під постером з озвучкою та якістю' }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: COMPONENT_NAME,
-            param: { name: 'customs_filmix_show_size', type: 'trigger', default: true },
-            field: { name: 'Показувати розмір файлу', description: 'Розраховувати орієнтовний обсяг за бітрейтом і тривалістю' }
-        });
-
         // Розділ: Трейлери
         Lampa.SettingsApi.addParam({
             component: COMPONENT_NAME,
@@ -120,7 +101,7 @@
         Lampa.SettingsApi.addParam({
             component: COMPONENT_NAME,
             param: { name: 'customs_trailers_enabled', type: 'trigger', default: true },
-            field: { name: 'Увімкнути трейлери', description: 'Стрічка трейлерів з TMDB та YouTube' }
+            field: { name: 'Увімкнути трейлери', description: 'Стрічка трейлерів під обкладинкою з TMDB та YouTube' }
         });
 
         LANG_ORDER.forEach(function (lang) {
@@ -145,9 +126,28 @@
                 Lampa.Storage.set(CACHE_KEY, {});
             }
         });
+
+        // Розділ: Filmix швидкий перегляд
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_title_filmix', type: 'title' },
+            field: { name: 'Filmix (Швидкий перегляд)' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_filmix_enabled', type: 'trigger', default: true },
+            field: { name: 'Стрічка відео Filmix', description: 'Показувати доступні відео під постером з озвучкою та якістю' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_filmix_show_size', type: 'trigger', default: true },
+            field: { name: 'Показувати розмір файлу', description: 'Розраховувати орієнтовний обсяг за бітрейтом і тривалістю' }
+        });
     }
 
-    // Реєстрація маніфесту та відображення назви "Lampa Customs" у розділі "Розширення"
+    // Реєстрація маніфесту та відображення назви "Lampa Customs"
     function registerManifestAndName() {
         var manifest = {
             type: 'video',
@@ -166,12 +166,11 @@
             Lampa.Manifest.plugins = [manifest];
         }
 
-        // Оновлюємо ім'я плагіна в картці списку розширень Lampa (замість "Без назви")
         try {
             var plugins = Lampa.Storage.get('plugins', []);
             var changed = false;
             plugins.forEach(function (p) {
-                if (p && p.url && (p.url.indexOf('lampacustoms') !== -1 || p.url.indexOf('trailers.js') !== -1 || p.url.indexOf('customs') !== -1)) {
+                if (p && p.url && (p.url.indexOf('customs') !== -1 || p.url.indexOf('lampacustoms') !== -1 || p.url.indexOf('trailers') !== -1)) {
                     if (p.name !== 'Lampa Customs') {
                         p.name = 'Lampa Customs';
                         changed = true;
@@ -182,7 +181,7 @@
         } catch (e) {}
     }
 
-    // ---------- Кеш пошуку YouTube ----------
+    // ---------- Кеш YouTube ----------
 
     function cacheGet(id) {
         var all = Lampa.Storage.get(CACHE_KEY, {});
@@ -479,15 +478,20 @@
         return Math.round(sizeMB) + ' МБ';
     }
 
-    var PROXY_WORKER = 'https://cors.nb557.workers.dev/';
-    function makeProxyUrl(url) {
-        if (Lampa.Platform.is('android')) return url;
-        var pos = url.indexOf('://');
-        if (pos !== -1) {
-            var after = url.substring(pos + 3);
-            return PROXY_WORKER + 'enc2t/' + encodeURIComponent(btoa(after));
-        }
-        return PROXY_WORKER + url;
+    // Точний формат проксі Cloudflare Worker, як у online_mod
+    function proxyFilmixUrl(link) {
+        if (Lampa.Platform.is('android')) return link;
+        var proxy = 'https://cors.nb557.workers.dev/';
+        var proxy_enc = 'param/User-Agent=' + encodeURIComponent('okhttp/3.10.0') + '/';
+        var b64 = btoa(proxy_enc + link);
+        var posEnd = link.lastIndexOf('?');
+        var posStart = link.lastIndexOf('://');
+        if (posEnd === -1 || posEnd <= posStart) posEnd = link.length;
+        if (posStart === -1) posStart = -3;
+        var name = link.substring(posStart + 3, posEnd);
+        posStart = name.lastIndexOf('/');
+        name = posStart !== -1 ? name.substring(posStart + 1) : 'api';
+        return proxy + 'enc2/' + encodeURIComponent(b64) + '/' + name + '?jacred.test';
     }
 
     function searchFilmix(movie, done) {
@@ -495,74 +499,121 @@
         var dev_id = '8a' + Math.random().toString(16).substring(2, 16);
         var dev_token = '?user_dev_id=' + dev_id + '&user_dev_name=Xiaomi&user_dev_token=' + (token || 'aaaabbbbccccddddeeeeffffaaaabbbb') + '&user_dev_vendor=Xiaomi&user_dev_os=14&user_dev_apk=2.2.0&app_lang=ru-rRU';
 
-        var title = cleanTitle(movie.title || movie.name);
-        var searchUrl = 'http://filmixapp.cyou/api/v2/search' + dev_token + '&story=' + encodeURIComponent(title);
+        var title1 = cleanTitle(movie.title || movie.name);
+        var title2 = cleanTitle(movie.original_title || movie.original_name);
 
-        var req = new Lampa.Reguest();
-        req.timeout(12000);
-        req.native(makeProxyUrl(searchUrl), function (json) {
-            if (json && json.length && json[0] && json[0].id) {
-                loadFilmixPost(json[0].id, dev_token, movie, done);
+        function querySearch(searchWord, callback) {
+            if (!searchWord) return callback([]);
+            var searchUrl = 'http://filmixapp.cyou/api/v2/search' + dev_token + '&story=' + encodeURIComponent(searchWord);
+            var req = new Lampa.Reguest();
+            req.timeout(12000);
+            req.native(proxyFilmixUrl(searchUrl), function (resp) {
+                var json = resp;
+                if (typeof json === 'string') {
+                    try { json = JSON.parse(json); } catch (e) { json = null; }
+                }
+                callback(Array.isArray(json) ? json : []);
+            }, function () {
+                callback([]);
+            });
+        }
+
+        querySearch(title1, function (list) {
+            if (list.length) {
+                selectAndLoadPost(list, dev_token, movie, done);
+            } else if (title2 && title2 !== title1) {
+                querySearch(title2, function (list2) {
+                    if (list2.length) {
+                        selectAndLoadPost(list2, dev_token, movie, done);
+                    } else {
+                        done([]);
+                    }
+                });
             } else {
                 done([]);
             }
-        }, function () {
-            done([]);
         });
+    }
+
+    function selectAndLoadPost(list, dev_token, movie, done) {
+        var target = list[0];
+        var searchYear = parseInt(((movie.release_date || movie.first_air_date || '') + '').slice(0, 4));
+        if (list.length > 1 && searchYear) {
+            var byYear = list.filter(function (c) { return c.year === searchYear; });
+            if (byYear.length) target = byYear[0];
+            else {
+                var nearYear = list.filter(function (c) { return c.year && Math.abs(c.year - searchYear) <= 1; });
+                if (nearYear.length) target = nearYear[0];
+            }
+        }
+        if (target && target.id) {
+            loadFilmixPost(target.id, dev_token, movie, done);
+        } else {
+            done([]);
+        }
     }
 
     function loadFilmixPost(id, dev_token, movie, done) {
         var postUrl = 'http://filmixapp.cyou/api/v2/post/' + id + dev_token;
         var req = new Lampa.Reguest();
         req.timeout(12000);
-        req.native(makeProxyUrl(postUrl), function (data) {
+        req.native(proxyFilmixUrl(postUrl), function (resp) {
+            var data = resp;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch (e) { data = null; }
+            }
             var streams = [];
-            var maxQ = (window.mod_filmix && window.mod_filmix.max_qualitie) || 1080;
+            var maxQ = (window.mod_filmix && window.mod_filmix.max_qualitie) || 2160;
             var showSize = flag('customs_filmix_show_size', true);
 
-            if (data && data.player_links && data.player_links.movie) {
-                var m = data.player_links.movie;
-                for (var key in m) {
-                    var item = m[key];
-                    if (item.translation === 'Заблокировано правообладателем!') continue;
+            if (data && data.player_links) {
+                var pl = data.player_links;
+                if (pl.movie && pl.movie.length) {
+                    // Фільми
+                    pl.movie.forEach(function (item) {
+                        if (!item || !item.link || item.translation === 'Заблокировано правообладателем!') return;
 
-                    var link = item.link || '';
-                    var matchQ = link.match(/\[([\d,]*)\]\.mp4/i);
-                    var qualities = matchQ ? matchQ[1].split(',').map(Number).filter(function (q) { return q <= maxQ; }) : [720];
-                    qualities.sort(function (a, b) { return b - a; });
+                        var m = item.link.match(/\[([\d,]*)\]/);
+                        var qualities = [];
+                        if (m) {
+                            qualities = m[1].split(',').map(function (s) { return parseInt(s); }).filter(function (n) { return !isNaN(n) && n > 0 && n <= maxQ; });
+                            qualities.sort(function (a, b) { return b - a; });
+                        }
 
-                    qualities.forEach(function (q) {
-                        var playUrl = link.replace(/\[[\d,]*\](\.mp4)/i, q + '$1');
+                        if (!qualities.length) qualities = [720];
+                        var bestQ = qualities[0];
+                        var playUrl = item.link.replace(/\[[\d,]*\]/i, bestQ);
+
                         streams.push({
-                            voice: item.translation || 'Дубляж / Переклад',
-                            quality: q >= 2160 ? '4K UHD' : q + 'p',
-                            raw_quality: q,
+                            voice: item.translation || 'Оригінал / Дубляж',
+                            quality: bestQ >= 2160 ? '4K UHD' : bestQ + 'p',
+                            raw_quality: bestQ,
                             url: playUrl,
-                            size: showSize ? calculateSize(q, movie.runtime) : ''
+                            size: showSize ? calculateSize(bestQ, movie.runtime) : ''
                         });
                     });
-                }
-            } else if (data && data.player_links && data.player_links.playlist) {
-                // Серіали: виводимо доступні варіанти перекладу з першою серією
-                var pl = data.player_links.playlist;
-                var firstSeasonKey = Object.keys(pl)[0];
-                if (firstSeasonKey && pl[firstSeasonKey]) {
-                    var voices = pl[firstSeasonKey];
-                    for (var vKey in voices) {
-                        var eps = voices[vKey];
-                        var firstEp = eps[Object.keys(eps)[0]];
-                        if (firstEp && firstEp.link) {
-                            var qList = (firstEp.qualities || []).filter(function (q) { return q <= maxQ; });
-                            qList.sort(function (a, b) { return b - a; });
-                            var bestQ = qList[0] || 720;
-                            var playLink = firstEp.link.replace(/%s/i, bestQ);
-                            streams.push({
-                                voice: vKey || 'Серіал',
-                                quality: bestQ >= 2160 ? '4K UHD' : bestQ + 'p',
-                                raw_quality: bestQ,
-                                url: playLink,
-                                size: ''
-                            });
+                } else if (pl.playlist && Object.keys(pl.playlist).length > 0) {
+                    // Серіали: доступні переклади з запуском першої серії
+                    var sKeys = Object.keys(pl.playlist);
+                    var s1 = pl.playlist[sKeys[0]];
+                    if (s1) {
+                        for (var vKey in s1) {
+                            var episodes = s1[vKey];
+                            var epKeys = Object.keys(episodes);
+                            var ep1 = episodes[epKeys[0]];
+                            if (ep1 && ep1.link) {
+                                var qList = (ep1.qualities || []).filter(function (q) { return q <= maxQ; });
+                                qList.sort(function (a, b) { return b - a; });
+                                var bestQ = qList[0] || 720;
+                                var playUrl = ep1.link.indexOf('%s') !== -1 ? ep1.link.replace(/%s/i, bestQ) : ep1.link;
+                                streams.push({
+                                   voice: vKey,
+                                   quality: bestQ >= 2160 ? '4K UHD' : bestQ + 'p',
+                                   raw_quality: bestQ,
+                                   url: playUrl,
+                                   size: ''
+                                });
+                            }
                         }
                     }
                 }
@@ -654,13 +705,25 @@
 
     // ---------- Вставка рядків на сторінку ----------
 
-    function insertRow(link, row, rowName, preferredIndex) {
+    // Вставка рядка відразу після потрібного елемента
+    function insertRowAfter(link, row, rowName, afterRowName) {
         var first = link.items && link.items[0];
         if (!first || !link.rows) return;
 
-        var index = Math.min(preferredIndex || 1, link.items.length);
-        var prevItem = link.items[index - 1];
-        var prevDom = prevItem ? prevItem.render(true) : first.render(true);
+        // За замовчуванням вставляємо на 1-шу позицію (відразу під обкладинкою та кнопками)
+        var insertIndex = 1;
+        var anchorNode = first.render(true);
+
+        if (afterRowName) {
+            var existingIdx = link.rows.indexOf(afterRowName);
+            if (existingIdx !== -1 && link.items[existingIdx]) {
+                insertIndex = existingIdx + 1;
+                anchorNode = link.items[existingIdx].render(true);
+            }
+        }
+
+        // Запобігаємо повторному додаванню
+        if (link.rows.indexOf(rowName) !== -1) return;
 
         row.use({
             onDown: link.emit.bind(link, 'down'),
@@ -671,13 +734,13 @@
             onToggle: function () { link.scroll.update(row.render(true)); }
         });
 
-        if (prevDom && prevDom.parentNode) {
-            prevDom.parentNode.insertBefore(row.render(true), prevDom.nextSibling);
+        if (anchorNode && anchorNode.parentNode) {
+            anchorNode.parentNode.insertBefore(row.render(true), anchorNode.nextSibling);
         }
 
-        link.items.splice(index, 0, row);
-        link.rows.splice(index, 0, rowName);
-        if (link.active >= index) link.active++;
+        link.items.splice(insertIndex, 0, row);
+        link.rows.splice(insertIndex, 0, rowName);
+        if (link.active >= insertIndex) link.active++;
 
         if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(link.scroll.render(true));
     }
@@ -692,23 +755,23 @@
         var page = e.body && e.body[0];
         var network = new Lampa.Reguest();
 
-        // 1. Filmix стрічка (якщо увімкнена)
-        if (flag('customs_filmix_enabled', true)) {
-            searchFilmix(movie, function (streams) {
-                if (!streams.length || !page || !document.body.contains(page)) return;
-                insertRow(e.link, createFilmixRow(streams, movie), ROW_FILMIX, 1);
-            });
-        }
-
-        // 2. Трейлери (якщо увімкнені)
+        // 1. Трейлери: ЗАВЖДИ відразу під обкладинкою (позиція 1)
         if (flag('customs_trailers_enabled', true)) {
             var langs = enabledLangs();
             if (langs.length) {
                 loadTrailers(network, method, movie.id, langs, function (list) {
                     if (!list.length || !page || !document.body.contains(page)) return;
-                    insertRow(e.link, createTrailersRow(list, langs), ROW_TRAILERS, 2);
+                    insertRowAfter(e.link, createTrailersRow(list, langs), ROW_TRAILERS, null);
                 });
             }
+        }
+
+        // 2. Filmix: відразу після трейлерів (або під обкладинкою, якщо трейлерів немає)
+        if (flag('customs_filmix_enabled', true)) {
+            searchFilmix(movie, function (streams) {
+                if (!streams.length || !page || !document.body.contains(page)) return;
+                insertRowAfter(e.link, createFilmixRow(streams, movie), ROW_FILMIX, ROW_TRAILERS);
+            });
         }
     }
 
