@@ -686,26 +686,43 @@
     function createFilmixRow(list, movie) {
         var row = new Lampa.Emit();
         var html = Lampa.Template.get('items_line', { title: 'Filmix — Доступні відео' });
-        var scroll = new Lampa.Scroll({ horizontal: true, step: 260 });
+        var scroll = new Lampa.Scroll({ horizontal: true, step: 280 });
         var last = null;
 
         html.addClass('customs-filmix');
 
         list.forEach(function (v) {
+            var isUa = isUkrainian(v.voice);
+            var langBadge = isUa ? '🇺🇦 UA' : (CYRILLIC.test(v.voice) ? 'RU' : 'EN');
+            var langClass = isUa ? 'badge--ua' : (langBadge === 'RU' ? 'badge--ru' : 'badge--en');
+
             var qClass = v.raw_quality >= 2160 ? 'q-4k' : (v.raw_quality >= 1440 ? 'q-1440' : (v.raw_quality >= 1080 ? 'q-1080' : (v.raw_quality >= 720 ? 'q-720' : 'q-480')));
+            var qLabel = v.quality;
+            if (v.raw_quality >= 2160 && /hdr/i.test(v.voice)) qLabel = '4K HDR';
+
             var el = $('<div class="customs-filmix-item selector">' +
-                '<div class="customs-filmix-item__inner">' +
-                    '<div class="customs-filmix-item__voice"></div>' +
-                    '<div class="customs-filmix-item__meta">' +
-                        '<span class="customs-filmix-item__quality ' + qClass + '"></span>' +
+                '<div class="customs-filmix-item__header">' +
+                    '<div class="customs-filmix-item__voice-box">' +
+                        '<span class="customs-filmix-item__lang ' + langClass + '">' + langBadge + '</span>' +
+                        '<span class="customs-filmix-item__voice"></span>' +
+                    '</div>' +
+                    '<span class="customs-filmix-item__quality ' + qClass + '">' + qLabel + '</span>' +
+                '</div>' +
+                '<div class="customs-filmix-item__divider"></div>' +
+                '<div class="customs-filmix-item__footer">' +
+                    '<div class="customs-filmix-item__size-box">' +
+                        '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
                         '<span class="customs-filmix-item__size"></span>' +
+                    '</div>' +
+                    '<div class="customs-filmix-item__action">' +
+                        '<span>Дивитися</span>' +
+                        '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
                     '</div>' +
                 '</div>' +
             '</div>');
 
             el.find('.customs-filmix-item__voice').text(v.voice);
-            el.find('.customs-filmix-item__quality').text(v.quality);
-            el.find('.customs-filmix-item__size').text(v.size ? '~' + v.size : '');
+            el.find('.customs-filmix-item__size').text(v.size || 'Онлайн');
 
             el.on('hover:focus', function () {
                 last = el[0];
@@ -881,23 +898,39 @@
             '.ua-trailer__source--tmdb{color:#5fd0f5;}',
             '.ua-trailer__meta{opacity:.6;}',
 
-            /* Filmix стрічка */
+            /* Filmix стрічка: Glassmorphism Cinema (Apple TV Style) */
             '.customs-filmix .scroll__body{display:flex;}',
-            '.customs-filmix .scroll__content{padding-top:.5em;padding-bottom:.5em;}',
-            '.customs-filmix-item{flex-shrink:0;width:15em;margin-right:1.2em;background:rgba(255,255,255,0.08);' +
-                'border:2px solid transparent;border-radius:0.8em;padding:0.8em 1em;cursor:pointer;transition:all .2s ease;}',
-            '.customs-filmix-item.focus{background:rgba(255,255,255,0.22);border-color:#fff;transform:scale(1.04);' +
-                'box-shadow:0 4px 15px rgba(0,0,0,0.5);}',
-            '.customs-filmix-item__voice{font-size:1.05em;font-weight:bold;color:#fff;margin-bottom:0.4em;' +
-                'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
-            '.customs-filmix-item__meta{display:flex;align-items:center;justify-content:space-between;gap:0.5em;font-size:0.85em;}',
-            '.customs-filmix-item__quality{font-weight:700;padding:0.15em 0.5em;border-radius:0.4em;font-size:0.85em;}',
-            '.customs-filmix-item__quality.q-4k{background:#d4af37;color:#000;}',
-            '.customs-filmix-item__quality.q-1440{background:#9b59b6;color:#fff;}',
-            '.customs-filmix-item__quality.q-1080{background:#0078d4;color:#fff;}',
-            '.customs-filmix-item__quality.q-720{background:#555;color:#eee;}',
-            '.customs-filmix-item__quality.q-480{background:#333;color:#bbb;}',
-            '.customs-filmix-item__size{color:#46d369;font-weight:600;}'
+            '.customs-filmix .scroll__content{padding-top:.6em;padding-bottom:.8em;}',
+            '.customs-filmix-item{flex-shrink:0;width:17.5em;margin-right:1.2em;' +
+                'background:linear-gradient(135deg,rgba(255,255,255,0.11) 0%,rgba(255,255,255,0.03) 100%);' +
+                '-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);' +
+                'border:1px solid rgba(255,255,255,0.16);border-radius:1em;padding:.85em 1em;cursor:pointer;' +
+                'box-shadow:0 8px 24px rgba(0,0,0,0.35),inset 0 1px 1px rgba(255,255,255,0.12);' +
+                'transition:transform .22s cubic-bezier(0.16,1,0.3,1),background .22s ease,border-color .22s ease,box-shadow .22s ease;' +
+                'box-sizing:border-box;}',
+            '.customs-filmix-item.focus{background:linear-gradient(135deg,rgba(255,255,255,0.26) 0%,rgba(255,255,255,0.10) 100%);' +
+                'border-color:rgba(255,255,255,0.95);transform:scale(1.05);' +
+                'box-shadow:0 14px 35px rgba(0,0,0,0.6),0 0 25px rgba(255,255,255,0.22),inset 0 1px 2px rgba(255,255,255,0.4);z-index:5;}',
+            '.customs-filmix-item__header{display:flex;align-items:center;justify-content:space-between;gap:.6em;}',
+            '.customs-filmix-item__voice-box{display:flex;align-items:center;gap:.5em;min-width:0;flex:1;}',
+            '.customs-filmix-item__lang{font-size:.72em;font-weight:800;padding:.15em .45em;border-radius:.35em;flex-shrink:0;letter-spacing:.03em;}',
+            '.customs-filmix-item__lang.badge--ua{background:rgba(59,130,246,0.25);color:#93c5fd;border:1px solid rgba(96,165,250,0.4);}',
+            '.customs-filmix-item__lang.badge--ru{background:rgba(148,163,184,0.18);color:#cbd5e1;border:1px solid rgba(148,163,184,0.25);}',
+            '.customs-filmix-item__lang.badge--en{background:rgba(168,85,247,0.2);color:#d8b4fe;border:1px solid rgba(168,85,247,0.3);}',
+            '.customs-filmix-item__voice{font-size:.95em;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.4);}',
+            '.customs-filmix-item__quality{font-weight:800;padding:.2em .55em;border-radius:.45em;font-size:.75em;flex-shrink:0;letter-spacing:.04em;text-transform:uppercase;}',
+            '.customs-filmix-item__quality.q-4k{background:linear-gradient(135deg,#fbbf24 0%,#d97706 100%);color:#000;box-shadow:0 2px 10px rgba(245,158,11,0.4);}',
+            '.customs-filmix-item__quality.q-1440{background:linear-gradient(135deg,#c084fc 0%,#7e22ce 100%);color:#fff;box-shadow:0 2px 8px rgba(168,85,247,0.35);}',
+            '.customs-filmix-item__quality.q-1080{background:linear-gradient(135deg,#3b82f6 0%,#1d4ed8 100%);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,0.35);}',
+            '.customs-filmix-item__quality.q-720{background:linear-gradient(135deg,#64748b 0%,#334155 100%);color:#f1f5f9;}',
+            '.customs-filmix-item__quality.q-480{background:rgba(255,255,255,0.12);color:#94a3b8;}',
+            '.customs-filmix-item__divider{height:1px;background:linear-gradient(90deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.03) 100%);margin:.6em 0 .55em 0;}',
+            '.customs-filmix-item__footer{display:flex;align-items:center;justify-content:space-between;gap:.5em;font-size:.82em;}',
+            '.customs-filmix-item__size-box{display:flex;align-items:center;gap:.4em;color:#34d399;font-weight:700;}',
+            '.customs-filmix-item__icon{width:1.1em;height:1.1em;flex-shrink:0;}',
+            '.customs-filmix-item__action{display:flex;align-items:center;gap:.3em;color:rgba(255,255,255,0.65);font-weight:600;font-size:.9em;transition:color .2s ease;}',
+            '.customs-filmix-item.focus .customs-filmix-item__action{color:#fbbf24;}',
+            '.customs-filmix-item__play-icon{width:.9em;height:.9em;fill:currentColor;flex-shrink:0;}'
         ].join('\n');
 
         var style = document.createElement('style');
