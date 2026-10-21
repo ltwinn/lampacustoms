@@ -162,6 +162,29 @@
                 description: 'Виберіть вигляд карток серій із кадрами та назвами'
             }
         });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: {
+                name: 'customs_filmix_theme',
+                type: 'select',
+                values: {
+                    hybrid: 'Гібридний (Білі кнопки + Скляні картки)',
+                    glass: 'Скло Apple TV (Frosted Glass)',
+                    lampa: 'Нативний Lampa (Clean White)'
+                },
+                default: 'hybrid'
+            },
+            field: {
+                name: 'Тема оформлення (кнопки та картки)',
+                description: 'Виберіть візуальний стиль: скло, нативний білий або гібрид'
+            },
+            onChange: function (value) {
+                var theme = value || 'hybrid';
+                $('.customs-filmix').removeClass('customs-theme-hybrid customs-theme-glass customs-theme-lampa')
+                    .addClass('customs-theme-' + theme);
+            }
+        });
     }
 
     // Реєстрація маніфесту та відображення назви "Lampa Customs"
@@ -969,7 +992,8 @@
         var scroll = new Lampa.Scroll({ horizontal: true, step: 290 });
         var last = null;
 
-        html.addClass('customs-filmix');
+        var theme = Lampa.Storage.get('customs_filmix_theme', 'hybrid');
+        html.addClass('customs-filmix customs-theme-' + theme);
 
         if (isSeries) {
             var seasons = data.seasons;
@@ -1557,7 +1581,26 @@
         var scroll = new Lampa.Scroll({ horizontal: true, step: 290 });
         var last = null;
 
-        html.addClass('customs-filmix');
+        var theme = Lampa.Storage.get('customs_filmix_theme', 'hybrid');
+        html.addClass('customs-filmix customs-theme-' + theme);
+
+        if (isSeries) {
+            var filterBar = $('<div class="customs-filmix-filter-bar">' +
+                '<div class="customs-filmix-filter-btn customs-filmix-filter-btn--skeleton selector">' +
+                    '<span class="customs-filmix-skeleton__pill" style="width:5.5em;"></span>' +
+                '</div>' +
+                '<div class="customs-filmix-filter-btn customs-filmix-filter-btn--skeleton selector">' +
+                    '<span class="customs-filmix-skeleton__pill" style="width:8.5em;"></span>' +
+                '</div>' +
+                '<div class="customs-filmix-filter-btn customs-filmix-filter-btn--skeleton selector">' +
+                    '<span class="customs-filmix-skeleton__pill" style="width:6em;"></span>' +
+                '</div>' +
+            '</div>');
+            filterBar.find('.selector').on('hover:focus', function () {
+                last = this;
+            });
+            html.find('.items-line__body').append(filterBar);
+        }
 
         for (var i = 0; i < 5; i++) {
             var skelHtml = isSeries ?
@@ -1790,12 +1833,26 @@
         if (e.type !== 'complite') return;
 
         var movie = e.data && e.data.movie;
-        var method = e.object && e.object.method;
-        if (!movie || !movie.id || (method !== 'movie' && method !== 'tv')) return;
+        if (!movie || !movie.id) return;
+
+        var method = (e.object && e.object.method) || (movie.name ? 'tv' : 'movie');
+        if (method !== 'movie' && method !== 'tv') {
+            method = movie.name ? 'tv' : 'movie';
+        }
+
+        var isSeries = Boolean(
+            method === 'tv' ||
+            (movie.name && !movie.title) ||
+            movie.number_of_seasons ||
+            movie.seasons ||
+            movie.first_air_date ||
+            (movie.media_type === 'tv') ||
+            (e.object && e.object.card && e.object.card.name && !e.object.card.title)
+        );
+        if (isSeries) method = 'tv';
 
         var page = e.body && e.body[0];
         var network = new Lampa.Reguest();
-        var isSeries = (method === 'tv' || Boolean(movie.number_of_seasons));
 
         // 1. Filmix: Вставляємо скелетон ВІДРАЗУ (або готові картки, якщо є в кеші)
         var filmixSkeleton = null;
@@ -1876,31 +1933,61 @@
             '.customs-trailer-skeleton__line{margin-top:.7em;height:1.1em;width:75%;border-radius:.4em;background:rgba(255,255,255,0.08);animation:customs-pulse 2.2s ease-in-out infinite;}',
             '.customs-trailer-skeleton__sub{margin-top:.4em;height:.85em;width:40%;border-radius:.35em;background:rgba(255,255,255,0.05);animation:customs-pulse 2.2s ease-in-out infinite;}',
 
-            /* Filmix стрічка: Glassmorphism Cinema (Apple TV Style, GPU-friendly) */
+            /* Filmix стрічка: Загальні стилі */
             '.customs-filmix .scroll__body{display:flex;}',
             '.customs-filmix .scroll__content{padding-top:.6em;padding-bottom:.8em;}',
             '.customs-filmix-filter-bar{display:flex;align-items:center;gap:.75em;padding:.4em 1.5em 1.1em 1.5em;flex-wrap:wrap;}',
-            '.customs-filmix-filter-btn{display:inline-flex;align-items:center;gap:.65em;padding:.62em 1.2em;' +
-                'background:linear-gradient(135deg,rgba(30,41,59,0.92) 0%,rgba(15,23,42,0.92) 100%);' +
-                'border:1px solid rgba(255,255,255,0.16);border-radius:.85em;cursor:pointer;' +
-                'font-size:1.05em;color:rgba(255,255,255,0.9);' +
-                'box-shadow:inset 0 1px 1px rgba(255,255,255,0.12),0 2px 8px rgba(0,0,0,0.25);' +
-                'transition:transform .2s cubic-bezier(0.16,1,0.3,1),background .2s cubic-bezier(0.16,1,0.3,1),box-shadow .2s cubic-bezier(0.16,1,0.3,1),border-color .2s cubic-bezier(0.16,1,0.3,1);}',
-            '.customs-filmix-filter-btn.focus{background:linear-gradient(135deg,rgba(45,60,90,0.98) 0%,rgba(20,28,45,0.98) 100%);' +
-                'border-color:rgba(255,255,255,0.85);box-shadow:0 0 20px rgba(255,255,255,0.35),inset 0 1px 2px rgba(255,255,255,0.5);' +
-                'transform:scale(1.05);color:#fff;z-index:2;}',
-            '.customs-filmix-filter-icon{width:1.35em;height:1.35em;stroke:currentColor;flex-shrink:0;opacity:.85;}',
-            '.customs-filmix-filter-label{color:rgba(255,255,255,0.55);font-weight:500;}',
-            '.customs-filmix-filter-val{font-weight:700;color:#fff;}',
-            '.customs-filmix-filter-arrow{width:.95em;height:.95em;stroke:currentColor;opacity:.6;margin-left:.1em;flex-shrink:0;}',
+            '.customs-filmix-filter-btn{display:inline-flex;align-items:center;gap:.65em;padding:.62em 1.2em;border-radius:.85em;cursor:pointer;font-size:1.05em;transition:transform .2s cubic-bezier(0.16,1,0.3,1),background .2s cubic-bezier(0.16,1,0.3,1),box-shadow .2s cubic-bezier(0.16,1,0.3,1),border-color .2s cubic-bezier(0.16,1,0.3,1),color .2s cubic-bezier(0.16,1,0.3,1);box-sizing:border-box;}',
+            '.customs-filmix-filter-icon{width:1.35em;height:1.35em;stroke:currentColor;flex-shrink:0;opacity:.85;transition:stroke .2s ease,opacity .2s ease;}',
+            '.customs-filmix-filter-label{font-weight:500;transition:color .2s ease;}',
+            '.customs-filmix-filter-val{font-weight:700;transition:color .2s ease;}',
+            '.customs-filmix-filter-arrow{width:.95em;height:.95em;stroke:currentColor;opacity:.6;margin-left:.1em;flex-shrink:0;transition:stroke .2s ease,opacity .2s ease;}',
+            '.customs-filmix-filter-btn--skeleton{min-width:6.5em;height:2.65em;padding:.62em 1.1em;}',
+            '.customs-filmix-skeleton__pill{display:inline-block;height:1em;border-radius:.35em;background:rgba(255,255,255,0.14);animation:customs-pulse 2.2s ease-in-out infinite;}',
+
+            /* 🌟 Тема 1: Скло Apple TV (Frosted Glass) */
+            '.customs-theme-glass .customs-filmix-filter-btn{background:rgba(255,255,255,0.08);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.18);color:rgba(255,255,255,0.9);box-shadow:inset 0 1px 1px rgba(255,255,255,0.15),0 4px 12px rgba(0,0,0,0.25);}',
+            '.customs-theme-glass .customs-filmix-filter-label{color:rgba(255,255,255,0.6);}',
+            '.customs-theme-glass .customs-filmix-filter-val{color:#fff;}',
+            '.customs-theme-glass .customs-filmix-filter-btn.focus{background:rgba(255,255,255,0.26);border-color:rgba(255,255,255,0.9);transform:scale(1.05);color:#fff;box-shadow:0 0 25px rgba(255,255,255,0.35),inset 0 1px 2px rgba(255,255,255,0.5);z-index:2;}',
+            '.customs-theme-glass .customs-filmix-item{background:rgba(20,25,35,0.6);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.16);box-shadow:0 8px 24px rgba(0,0,0,0.35),inset 0 1px 1px rgba(255,255,255,0.12);}',
+            '.customs-theme-glass .customs-filmix-item.focus{background:rgba(30,40,60,0.85);border-color:rgba(255,255,255,0.95);transform:scale(1.05);box-shadow:0 14px 35px rgba(0,0,0,0.6),0 0 25px rgba(255,255,255,0.25);z-index:5;}',
+            '.customs-theme-glass .customs-filmix-skeleton{background:rgba(20,25,35,0.6);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.12);}',
+
+            /* ⚪ Тема 2: Нативний Lampa (Clean White / Pure Lampa) */
+            '.customs-theme-lampa .customs-filmix-filter-btn{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.9);box-shadow:none;}',
+            '.customs-theme-lampa .customs-filmix-filter-label{color:rgba(255,255,255,0.6);}',
+            '.customs-theme-lampa .customs-filmix-filter-val{color:#fff;}',
+            '.customs-theme-lampa .customs-filmix-filter-btn.focus{background:#fff !important;color:#000 !important;border-color:#fff !important;transform:scale(1.04);box-shadow:0 0 22px rgba(255,255,255,0.5);z-index:2;}',
+            '.customs-theme-lampa .customs-filmix-filter-btn.focus .customs-filmix-filter-icon{stroke:#000 !important;opacity:1 !important;}',
+            '.customs-theme-lampa .customs-filmix-filter-btn.focus .customs-filmix-filter-label{color:rgba(0,0,0,0.7) !important;}',
+            '.customs-theme-lampa .customs-filmix-filter-btn.focus .customs-filmix-filter-val{color:#000 !important;}',
+            '.customs-theme-lampa .customs-filmix-filter-btn.focus .customs-filmix-filter-arrow{stroke:#000 !important;opacity:.8 !important;}',
+            '.customs-theme-lampa .customs-filmix-item{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);box-shadow:0 6px 18px rgba(0,0,0,0.3);}',
+            '.customs-theme-lampa .customs-filmix-item.focus{background:rgba(255,255,255,0.18);border-color:#fff;transform:scale(1.04);box-shadow:0 0 0 3px #fff,0 12px 30px rgba(0,0,0,0.6);z-index:5;}',
+            '.customs-theme-lampa .customs-filmix-skeleton{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);}',
+
+            /* 🔀 Тема 3: Гібридна (Білі кнопки + Скляні картки, за замовчуванням) */
+            '.customs-theme-hybrid .customs-filmix-filter-btn{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.9);box-shadow:none;}',
+            '.customs-theme-hybrid .customs-filmix-filter-label{color:rgba(255,255,255,0.6);}',
+            '.customs-theme-hybrid .customs-filmix-filter-val{color:#fff;}',
+            '.customs-theme-hybrid .customs-filmix-filter-btn.focus{background:#fff !important;color:#000 !important;border-color:#fff !important;transform:scale(1.04);box-shadow:0 0 22px rgba(255,255,255,0.5);z-index:2;}',
+            '.customs-theme-hybrid .customs-filmix-filter-btn.focus .customs-filmix-filter-icon{stroke:#000 !important;opacity:1 !important;}',
+            '.customs-theme-hybrid .customs-filmix-filter-btn.focus .customs-filmix-filter-label{color:rgba(0,0,0,0.7) !important;}',
+            '.customs-theme-hybrid .customs-filmix-filter-btn.focus .customs-filmix-filter-val{color:#000 !important;}',
+            '.customs-theme-hybrid .customs-filmix-filter-btn.focus .customs-filmix-filter-arrow{stroke:#000 !important;opacity:.8 !important;}',
+            '.customs-theme-hybrid .customs-filmix-item{background:rgba(20,25,35,0.6);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.16);box-shadow:0 8px 24px rgba(0,0,0,0.35),inset 0 1px 1px rgba(255,255,255,0.12);}',
+            '.customs-theme-hybrid .customs-filmix-item.focus{background:rgba(30,40,60,0.85);border-color:rgba(255,255,255,0.95);transform:scale(1.05);box-shadow:0 14px 35px rgba(0,0,0,0.6),0 0 25px rgba(255,255,255,0.25);z-index:5;}',
+            '.customs-theme-hybrid .customs-filmix-skeleton{background:rgba(20,25,35,0.6);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.12);}',
+
+            /* Базові стилі карток Filmix */
             '.customs-filmix-item{position:relative;flex-shrink:0;width:18.5em;margin-right:1.2em;' +
-                'background:linear-gradient(135deg,rgba(26,34,50,0.94) 0%,rgba(15,23,42,0.94) 100%);' +
+                'background:rgba(20,25,35,0.6);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);' +
                 'border:1px solid rgba(255,255,255,0.14);border-radius:1em;padding:.85em 1em;cursor:pointer;' +
                 'box-shadow:0 8px 24px rgba(0,0,0,0.35),inset 0 1px 1px rgba(255,255,255,0.12);' +
                 'transition:transform .22s cubic-bezier(0.16,1,0.3,1),background .22s ease,border-color .22s ease,box-shadow .22s ease;' +
                 'box-sizing:border-box;will-change:transform;}',
-            '.customs-filmix-item.focus{background:linear-gradient(135deg,rgba(37,50,75,0.98) 0%,rgba(20,27,40,0.98) 100%);' +
-                'border-color:rgba(255,255,255,0.95);transform:scale(1.05);' +
+            '.customs-filmix-item.focus{border-color:rgba(255,255,255,0.95);transform:scale(1.05);' +
                 'box-shadow:0 14px 35px rgba(0,0,0,0.6),0 0 25px rgba(255,255,255,0.22),inset 0 1px 2px rgba(255,255,255,0.4);z-index:5;}',
             '.customs-filmix-item__header{display:flex;align-items:center;justify-content:space-between;gap:.6em;}',
             '.customs-filmix-item__header > div{min-width:0;flex:1;}',
@@ -1939,7 +2026,7 @@
             '.customs-filmix-item__progress.time-line > div{height:100%;background:#3b82f6;border-radius:0 0 1em 1em;transition:width .2s ease;}',
 
             /* Filmix: Скелетони */
-            '.customs-filmix-skeleton{position:relative;flex-shrink:0;width:19.5em;margin-right:1.2em;border-radius:1em;overflow:hidden;background:rgba(20,27,40,0.85);border:1px solid rgba(255,255,255,0.08);box-sizing:border-box;display:flex;flex-direction:column;transition:transform .2s ease,border-color .2s ease;}',
+            '.customs-filmix-skeleton{position:relative;flex-shrink:0;width:19.5em;margin-right:1.2em;border-radius:1em;overflow:hidden;background:rgba(20,25,35,0.6);border:1px solid rgba(255,255,255,0.1);box-sizing:border-box;display:flex;flex-direction:column;transition:transform .2s ease,border-color .2s ease;}',
             '.customs-filmix-skeleton.focus{border-color:rgba(255,255,255,0.8);transform:scale(1.04);z-index:2;}',
             '.customs-filmix-skeleton--movie{width:18.5em;padding:.85em 1em;height:auto;}',
             '.customs-filmix-skeleton__thumb{width:100%;height:10.5em;background:rgba(255,255,255,0.06);animation:customs-pulse 2.2s ease-in-out infinite;}',
