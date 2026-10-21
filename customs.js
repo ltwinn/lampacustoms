@@ -1197,12 +1197,12 @@
                                 '</div>' +
                                 '<div class="customs-filmix-item__footer">' +
                                     '<div class="customs-filmix-item__size-box">' +
-                                        '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
+                                        '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:1.1em;height:1.1em;flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
                                         '<span class="customs-filmix-item__size">' + formattedSize + '</span>' +
                                     '</div>' +
                                     '<div class="customs-filmix-item__action">' +
                                         '<span>Дивитися</span>' +
-                                        '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                                        '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor" style="width:.9em;height:.9em;flex-shrink:0;"><path d="M8 5v14l11-7z"/></svg>' +
                                     '</div>' +
                                 '</div>' +
                             '</div>' +
@@ -1233,7 +1233,7 @@
                                     '</div>' +
                                     '<div class="customs-filmix-item__action">' +
                                         '<span>Дивитися</span>' +
-                                        '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                                        '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor" style="width:.9em;height:.9em;flex-shrink:0;"><path d="M8 5v14l11-7z"/></svg>' +
                                     '</div>' +
                                 '</div>' +
                             '</div>' +
@@ -1259,12 +1259,12 @@
                                 '<div class="customs-filmix-item__divider"></div>' +
                                 '<div class="customs-filmix-item__footer">' +
                                     '<div class="customs-filmix-item__size-box">' +
-                                        '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
+                                        '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:1.1em;height:1.1em;flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
                                         '<span class="customs-filmix-item__size">' + formattedSize + '</span>' +
                                     '</div>' +
                                     '<div class="customs-filmix-item__action">' +
                                         '<span>Дивитися</span>' +
-                                        '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                                        '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor" style="width:.9em;height:.9em;flex-shrink:0;"><path d="M8 5v14l11-7z"/></svg>' +
                                     '</div>' +
                                 '</div>' +
                             '</div>' +
@@ -1385,12 +1385,12 @@
                     '<div class="customs-filmix-item__divider"></div>' +
                     '<div class="customs-filmix-item__footer">' +
                         '<div class="customs-filmix-item__size-box">' +
-                            '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
+                            '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:1.1em;height:1.1em;flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
                             '<span class="customs-filmix-item__size"></span>' +
                         '</div>' +
                         '<div class="customs-filmix-item__action">' +
                             '<span>Дивитися</span>' +
-                            '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                            '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor" style="width:.9em;height:.9em;flex-shrink:0;"><path d="M8 5v14l11-7z"/></svg>' +
                         '</div>' +
                     '</div>' +
                 '</div>');
@@ -1669,6 +1669,7 @@
             '.customs-filmix-item__icon{width:1.1em;height:1.1em;flex-shrink:0;}',
             '.customs-filmix-item__action{display:flex;align-items:center;gap:.3em;color:rgba(255,255,255,0.65);font-weight:600;font-size:.9em;transition:color .2s ease;}',
             '.customs-filmix-item.focus .customs-filmix-item__action{color:#fbbf24;}',
+            '.customs-filmix-item__play-icon{width:.9em;height:.9em;fill:currentColor;flex-shrink:0;}',
             '.customs-filmix-item__progress.time-line{margin:0;position:absolute;bottom:0;left:0;right:0;width:100%;height:3px;background:rgba(255,255,255,0.15);overflow:hidden;border-radius:0 0 1em 1em;pointer-events:none;}',
             '.customs-filmix-item__progress.time-line.hide{display:none;}',
             '.customs-filmix-item__progress.time-line > div{height:100%;background:#3b82f6;border-radius:0 0 1em 1em;transition:width .2s ease;}',
