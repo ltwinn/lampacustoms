@@ -7,8 +7,8 @@
 (function () {
     'use strict';
 
-    if (window.lampa_customs_plugin) return;
-    window.lampa_customs_plugin = true;
+    var PLUGIN_VERSION = '1.2.1';
+    window.lampa_customs_plugin = PLUGIN_VERSION;
 
     var COMPONENT_NAME = 'lampa_customs';
     var ROW_TRAILERS = 'customs_trailers';
@@ -84,7 +84,7 @@
     function addSettings() {
         Lampa.SettingsApi.addComponent({
             component: COMPONENT_NAME,
-            name: 'Lampa Customs',
+            name: 'Lampa Customs v' + PLUGIN_VERSION,
             icon: '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
                 '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
                 '</svg>'
@@ -191,8 +191,8 @@
     function registerManifestAndName() {
         var manifest = {
             type: 'video',
-            version: '1.2.0',
-            name: 'Lampa Customs',
+            version: PLUGIN_VERSION,
+            name: 'Lampa Customs v' + PLUGIN_VERSION,
             description: 'Трейлери та швидкий перегляд Filmix',
             component: COMPONENT_NAME
         };
@@ -2200,28 +2200,22 @@
             /* Filmix Card Marquee & Typography */
             '.customs-filmix-item__title-wrap{min-width:0;flex:1;overflow:hidden;white-space:nowrap;display:block;position:relative;}',
             '.customs-filmix-item__voice-inner,.customs-filmix-item__title-inner{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transform:translate3d(0,0,0);animation:none;}',
-            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__voice-inner,' +
-            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__title-inner{display:block !important;max-width:100% !important;overflow:hidden !important;text-overflow:ellipsis !important;white-space:nowrap !important;transform:translate3d(0,0,0) !important;animation:none !important;}',
+            '.customs-filmix-item:not(.focus) .customs-filmix-item__voice-inner,' +
+            '.customs-filmix-item:not(.focus) .customs-filmix-item__title-inner{display:block !important;max-width:100% !important;overflow:hidden !important;text-overflow:ellipsis !important;white-space:nowrap !important;transform:translate3d(0,0,0) !important;animation:none !important;}',
             '.customs-filmix-item__voice-text,.customs-filmix-item__voice-dup{display:inline-block;white-space:nowrap;font-size:.95em;font-weight:700;color:#fff;vertical-align:middle;text-shadow:0 1px 2px rgba(0,0,0,0.4);flex-shrink:0;}',
             '.customs-filmix-item__title-text,.customs-filmix-item__title-dup{display:inline-block;white-space:nowrap;font-size:.95em;font-weight:700;color:#fff;vertical-align:middle;text-shadow:0 1px 2px rgba(0,0,0,0.5);line-height:1.3;flex-shrink:0;}',
             '.customs-filmix-item__voice-sep,.customs-filmix-item__title-sep{display:none;padding:0 .55em;font-size:.85em;color:rgba(255,255,255,0.4);vertical-align:middle;flex-shrink:0;}',
             '.customs-filmix-item__voice-dup,.customs-filmix-item__title-dup{display:none;}',
-            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__voice-dup,' +
-            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__title-dup,' +
-            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__voice-sep,' +
-            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__title-sep{display:none !important;}',
+            '.customs-filmix-item:not(.focus) .customs-filmix-item__voice-dup,' +
+            '.customs-filmix-item:not(.focus) .customs-filmix-item__title-dup,' +
+            '.customs-filmix-item:not(.focus) .customs-filmix-item__voice-sep,' +
+            '.customs-filmix-item:not(.focus) .customs-filmix-item__title-sep{display:none !important;}',
             '.customs-filmix-item.focus .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-dup,' +
-            '.customs-filmix-item:hover .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-dup,' +
             '.customs-filmix-item.focus .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-sep,' +
-            '.customs-filmix-item:hover .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-sep,' +
             '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-dup,' +
-            '.customs-filmix-item:hover .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-dup,' +
-            '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-sep,' +
-            '.customs-filmix-item:hover .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-sep{display:inline-block !important;}',
+            '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-sep{display:inline-block !important;}',
             '.customs-filmix-item.focus .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-inner,' +
-            '.customs-filmix-item:hover .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-inner,' +
-            '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-inner,' +
-            '.customs-filmix-item:hover .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-inner{' +
+            '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-inner{' +
                 'display:inline-flex !important;align-items:center !important;max-width:none !important;' +
                 'overflow:visible !important;text-overflow:clip !important;white-space:nowrap !important;' +
                 'animation:customs-marquee-continuous var(--marquee-dur, 6s) linear infinite !important;' +
@@ -2293,6 +2287,9 @@
             '.customs-filmix-split-left .customs-filmix-item__ep-badge{position:absolute;bottom:.5em;left:.5em;background:rgba(10,15,25,0.85);border:1px solid rgba(255,255,255,0.25);color:#fff;z-index:2;}',
             '.customs-filmix-split-right{flex:1;min-width:0;padding:.75em .85em;display:flex;flex-direction:column;justify-content:space-between;}'
         ].join('\n');
+
+        var old = document.getElementById('lampa-customs-style');
+        if (old && old.parentNode) old.parentNode.removeChild(old);
 
         var style = document.createElement('style');
         style.id = 'lampa-customs-style';
