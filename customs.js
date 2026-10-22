@@ -916,33 +916,77 @@
         } catch (e) {}
     }
 
-    function applyCardMarquee(card) {
-        if (!card) return;
-        var targets = card.find('.customs-filmix-item__voice, .customs-filmix-item__title');
-        targets.each(function () {
-            var node = this;
-            if (node.classList && node.classList.contains('marquee')) return;
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
 
-            var diff = node.scrollWidth - node.clientWidth;
-            if (diff > 4) {
-                var speed = 32;
-                var dur = Math.max(3.0, (diff / speed) + 1.6);
-                node.style.setProperty('--scroll-dist', '-' + (diff + 8) + 'px');
-                node.style.setProperty('--scroll-dur', dur.toFixed(2) + 's');
-                if (node.classList) node.classList.add('marquee');
-                else $(node).addClass('marquee');
+    function renderTitleWrapHtml(text) {
+        var safe = escapeHtml(text);
+        return '<div class="customs-filmix-item__title-wrap" title="' + safe + '">' +
+            '<div class="customs-filmix-item__title-inner">' +
+                '<span class="customs-filmix-item__title-text">' + safe + '</span>' +
+                '<span class="customs-filmix-item__title-sep" aria-hidden="true">&bull;</span>' +
+                '<span class="customs-filmix-item__title-dup" aria-hidden="true">' + safe + '</span>' +
+                '<span class="customs-filmix-item__title-sep" aria-hidden="true">&bull;</span>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function renderVoiceWrapHtml(cleanVoice, rawVoice) {
+        var safe = escapeHtml(cleanVoice);
+        var safeRaw = escapeHtml(rawVoice || cleanVoice);
+        return '<div class="customs-filmix-item__voice-wrap" title="' + safeRaw + '">' +
+            '<div class="customs-filmix-item__voice-inner">' +
+                '<span class="customs-filmix-item__voice-text">' + safe + '</span>' +
+                '<span class="customs-filmix-item__voice-sep" aria-hidden="true">&bull;</span>' +
+                '<span class="customs-filmix-item__voice-dup" aria-hidden="true">' + safe + '</span>' +
+                '<span class="customs-filmix-item__voice-sep" aria-hidden="true">&bull;</span>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function checkCardMarquee(target) {
+        if (!target) return;
+        var $el = $(target);
+        var items = $el.is('.customs-filmix-item__voice-wrap, .customs-filmix-item__title-wrap') ?
+            $el : $el.find('.customs-filmix-item__voice-wrap, .customs-filmix-item__title-wrap');
+
+        items.each(function () {
+            var wrap = this;
+            var text = wrap.querySelector('.customs-filmix-item__voice-text, .customs-filmix-item__title-text');
+            if (!text) return;
+
+            var wrapW = wrap.clientWidth;
+            if (wrapW <= 0) return;
+
+            var textW = Math.max(text.offsetWidth || 0, text.scrollWidth || 0);
+            if (textW > wrapW) {
+                if (wrap.classList) wrap.classList.add('has-marquee');
+                else $(wrap).addClass('has-marquee');
+
+                var dist = textW + 24;
+                var dur = Math.max(3.5, dist / 30);
+                wrap.style.setProperty('--marquee-dur', dur.toFixed(2) + 's');
+            } else {
+                if (wrap.classList) wrap.classList.remove('has-marquee');
+                else $(wrap).removeClass('has-marquee');
+                wrap.style.removeProperty('--marquee-dur');
             }
         });
     }
 
-    function resetCardMarquee(card) {
-        if (!card) return;
-        card.find('.marquee').each(function () {
-            this.style.removeProperty('--scroll-dist');
-            this.style.removeProperty('--scroll-dur');
-            if (this.classList) this.classList.remove('marquee');
-            else $(this).removeClass('marquee');
-        });
+    function applyCardMarquee(target) {
+        checkCardMarquee(target);
+    }
+
+    function resetCardMarquee(target) {
+        // Automatically handled by CSS scoped to .focus and :hover
     }
 
     function parseStreamMetadata(voice, url, rawQuality) {
@@ -1341,7 +1385,7 @@
                                     '<div class="customs-filmix-item__header">' +
                                         '<div>' +
                                             '<div class="customs-filmix-item__ep-sub">ЕПІЗОД ' + ep.episode + '</div>' +
-                                            '<div class="customs-filmix-item__title-wrap"><div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div></div>' +
+                                            renderTitleWrapHtml(epTitle) +
                                         '</div>' +
                                         '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                                     '</div>' +
@@ -1377,7 +1421,7 @@
                                         '<span class="customs-filmix-item__ep-sub">' + ep.episode + ' СЕРІЯ</span>' +
                                         '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                                     '</div>' +
-                                    '<div class="customs-filmix-item__title-wrap"><div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div></div>' +
+                                    renderTitleWrapHtml(epTitle) +
                                 '</div>' +
                                 '<div class="customs-filmix-item__tags">' +
                                     '<span class="customs-filmix-tag tag--codec">' + meta.codec + '</span>' +
@@ -1405,7 +1449,7 @@
                                 '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                             '</div>' +
                             '<div class="customs-filmix-item__content">' +
-                                '<div class="customs-filmix-item__title-wrap"><div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div></div>' +
+                                renderTitleWrapHtml(epTitle) +
                                 '<div class="customs-filmix-item__tags">' +
                                     '<span class="customs-filmix-tag tag--codec">' + meta.codec + '</span>' +
                                     '<span class="customs-filmix-tag ' + meta.colorClass + '">' + meta.color + '</span>' +
@@ -1439,7 +1483,7 @@
                     el.on('hover:focus', function () {
                         last = el[0];
                         scroll.update(el, true);
-                        applyCardMarquee(el);
+                        checkCardMarquee(el);
 
                         if (!probed && playUrl && playUrl.indexOf('http') === 0 && showSize) {
                             if (probeTimer) clearTimeout(probeTimer);
@@ -1456,14 +1500,8 @@
                         }
                     });
 
-                    el.on('hover:blur', function () {
-                        resetCardMarquee(el);
-                    });
                     el.on('mouseenter', function () {
-                        applyCardMarquee(el);
-                    });
-                    el.on('mouseleave', function () {
-                        resetCardMarquee(el);
+                        checkCardMarquee(el);
                     });
 
                     el.on('hover:enter', function () {
@@ -1519,6 +1557,7 @@
                     });
 
                     scroll.append(el[0]);
+                    checkCardMarquee(el);
                 });
 
                 if (!cachedTmdb && movie.id) {
@@ -1531,7 +1570,9 @@
                             if (item) {
                                 if (item.name) {
                                     var fullT = epNum + '. ' + item.name;
-                                    card.find('.customs-filmix-item__title').text(fullT).attr('title', fullT);
+                                    card.find('.customs-filmix-item__title-text, .customs-filmix-item__title-dup').text(fullT);
+                                    card.find('.customs-filmix-item__title-wrap').attr('title', fullT);
+                                    checkCardMarquee(card);
                                 }
                                 if (item.still) {
                                     card.find('img').attr('src', item.still);
@@ -1544,6 +1585,7 @@
 
             html.find('.items-line__body').append(filterBar);
             html.find('.items-line__body').append(scroll.render(true));
+            setTimeout(function () { checkCardMarquee(html); }, 100);
 
             updateFilterLabels();
             renderEpisodes();
@@ -1558,7 +1600,7 @@
                     '<div class="customs-filmix-item__header">' +
                         '<div class="customs-filmix-item__voice-box">' +
                             '<span class="customs-filmix-item__lang ' + meta.langClass + '">' + meta.langBadge + '</span>' +
-                            '<div class="customs-filmix-item__voice-wrap"><span class="customs-filmix-item__voice"></span></div>' +
+                            renderVoiceWrapHtml(meta.cleanVoice, v.voice) +
                         '</div>' +
                         '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                     '</div>' +
@@ -1582,7 +1624,6 @@
                 '</div>');
 
                 var showSize = flag('customs_filmix_show_size', true);
-                el.find('.customs-filmix-item__voice').text(meta.cleanVoice).attr('title', v.voice);
                 el.find('.customs-filmix-item__size').text(showSize ? 'Онлайн' : '');
 
                 var movHash = (Lampa.Utils && Lampa.Utils.hash) ? Lampa.Utils.hash(movie.original_title || movie.title || movie.name || '') : '';
@@ -1604,7 +1645,7 @@
                 el.on('hover:focus', function () {
                     last = el[0];
                     scroll.update(el, true);
-                    applyCardMarquee(el);
+                    checkCardMarquee(el);
 
                     if (!probed && v.url && v.url.indexOf('http') === 0 && showSize) {
                         if (probeTimer) clearTimeout(probeTimer);
@@ -1623,14 +1664,8 @@
                     }
                 });
 
-                el.on('hover:blur', function () {
-                    resetCardMarquee(el);
-                });
                 el.on('mouseenter', function () {
-                    applyCardMarquee(el);
-                });
-                el.on('mouseleave', function () {
-                    resetCardMarquee(el);
+                    checkCardMarquee(el);
                 });
 
                 el.on('hover:enter', function () {
@@ -1645,9 +1680,11 @@
                 });
 
                 scroll.append(el[0]);
+                checkCardMarquee(el);
             });
 
             html.find('.items-line__body').append(scroll.render(true));
+            setTimeout(function () { checkCardMarquee(html); }, 100);
         }
 
         row.create = function () {};
@@ -2160,11 +2197,36 @@
             '.customs-filmix-item__lang.badge--ua{background:rgba(59,130,246,0.25);color:#93c5fd;border:1px solid rgba(96,165,250,0.4);}',
             '.customs-filmix-item__lang.badge--ru{background:rgba(148,163,184,0.18);color:#cbd5e1;border:1px solid rgba(148,163,184,0.25);}',
             '.customs-filmix-item__lang.badge--en{background:rgba(168,85,247,0.2);color:#d8b4fe;border:1px solid rgba(168,85,247,0.3);}',
-            '.customs-filmix-item__voice{display:inline-block;max-width:100%;font-size:.95em;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.4);vertical-align:middle;will-change:transform;}',
-            '.customs-filmix-item__title-wrap{min-width:0;overflow:hidden;white-space:nowrap;display:block;}',
-            '.customs-filmix-item__title{display:inline-block;max-width:100%;font-size:.95em;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.5);line-height:1.3;vertical-align:middle;will-change:transform;}',
-            '.customs-filmix-item__voice.marquee,.customs-filmix-item__title.marquee{max-width:none !important;overflow:visible !important;text-overflow:clip !important;animation:customs-marquee var(--scroll-dur, 3.5s) cubic-bezier(0.42,0,0.58,1) infinite;animation-delay:0.35s;}',
-            '@keyframes customs-marquee{0%,20%{transform:translate3d(0,0,0);}55%,78%{transform:translate3d(var(--scroll-dist,0),0,0);}100%{transform:translate3d(0,0,0);}}',
+            /* Filmix Card Marquee & Typography */
+            '.customs-filmix-item__title-wrap{min-width:0;flex:1;overflow:hidden;white-space:nowrap;display:block;position:relative;}',
+            '.customs-filmix-item__voice-inner,.customs-filmix-item__title-inner{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transform:translate3d(0,0,0);animation:none;}',
+            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__voice-inner,' +
+            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__title-inner{display:block !important;max-width:100% !important;overflow:hidden !important;text-overflow:ellipsis !important;white-space:nowrap !important;transform:translate3d(0,0,0) !important;animation:none !important;}',
+            '.customs-filmix-item__voice-text,.customs-filmix-item__voice-dup{display:inline-block;white-space:nowrap;font-size:.95em;font-weight:700;color:#fff;vertical-align:middle;text-shadow:0 1px 2px rgba(0,0,0,0.4);flex-shrink:0;}',
+            '.customs-filmix-item__title-text,.customs-filmix-item__title-dup{display:inline-block;white-space:nowrap;font-size:.95em;font-weight:700;color:#fff;vertical-align:middle;text-shadow:0 1px 2px rgba(0,0,0,0.5);line-height:1.3;flex-shrink:0;}',
+            '.customs-filmix-item__voice-sep,.customs-filmix-item__title-sep{display:none;padding:0 .55em;font-size:.85em;color:rgba(255,255,255,0.4);vertical-align:middle;flex-shrink:0;}',
+            '.customs-filmix-item__voice-dup,.customs-filmix-item__title-dup{display:none;}',
+            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__voice-dup,' +
+            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__title-dup,' +
+            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__voice-sep,' +
+            '.customs-filmix-item:not(.focus):not(:hover) .customs-filmix-item__title-sep{display:none !important;}',
+            '.customs-filmix-item.focus .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-dup,' +
+            '.customs-filmix-item:hover .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-dup,' +
+            '.customs-filmix-item.focus .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-sep,' +
+            '.customs-filmix-item:hover .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-sep,' +
+            '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-dup,' +
+            '.customs-filmix-item:hover .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-dup,' +
+            '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-sep,' +
+            '.customs-filmix-item:hover .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-sep{display:inline-block !important;}',
+            '.customs-filmix-item.focus .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-inner,' +
+            '.customs-filmix-item:hover .customs-filmix-item__voice-wrap.has-marquee .customs-filmix-item__voice-inner,' +
+            '.customs-filmix-item.focus .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-inner,' +
+            '.customs-filmix-item:hover .customs-filmix-item__title-wrap.has-marquee .customs-filmix-item__title-inner{' +
+                'display:inline-flex !important;align-items:center !important;max-width:none !important;' +
+                'overflow:visible !important;text-overflow:clip !important;white-space:nowrap !important;' +
+                'animation:customs-marquee-continuous var(--marquee-dur, 6s) linear infinite !important;' +
+                'animation-delay:0.35s !important;will-change:transform;}',
+            '@keyframes customs-marquee-continuous{0%{transform:translate3d(0,0,0);}100%{transform:translate3d(-50%,0,0);}}',
             '.customs-filmix-item__ep-sub{font-size:.7em;font-weight:700;color:#93c5fd;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.15em;}',
             '.customs-filmix-item__quality{font-weight:800;padding:.2em .55em;border-radius:.45em;font-size:.75em;flex-shrink:0;letter-spacing:.04em;text-transform:uppercase;}',
             '.customs-filmix-item__quality.q-4k{background:linear-gradient(135deg,#fbbf24 0%,#d97706 100%);color:#000;box-shadow:0 2px 10px rgba(245,158,11,0.4);}',
