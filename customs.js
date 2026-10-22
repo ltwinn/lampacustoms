@@ -916,6 +916,35 @@
         } catch (e) {}
     }
 
+    function applyCardMarquee(card) {
+        if (!card) return;
+        var targets = card.find('.customs-filmix-item__voice, .customs-filmix-item__title');
+        targets.each(function () {
+            var node = this;
+            if (node.classList && node.classList.contains('marquee')) return;
+
+            var diff = node.scrollWidth - node.clientWidth;
+            if (diff > 4) {
+                var speed = 32;
+                var dur = Math.max(3.0, (diff / speed) + 1.6);
+                node.style.setProperty('--scroll-dist', '-' + (diff + 8) + 'px');
+                node.style.setProperty('--scroll-dur', dur.toFixed(2) + 's');
+                if (node.classList) node.classList.add('marquee');
+                else $(node).addClass('marquee');
+            }
+        });
+    }
+
+    function resetCardMarquee(card) {
+        if (!card) return;
+        card.find('.marquee').each(function () {
+            this.style.removeProperty('--scroll-dist');
+            this.style.removeProperty('--scroll-dur');
+            if (this.classList) this.classList.remove('marquee');
+            else $(this).removeClass('marquee');
+        });
+    }
+
     function parseStreamMetadata(voice, url, rawQuality) {
         var str = (voice || '') + ' ' + (url || '');
 
@@ -1312,7 +1341,7 @@
                                     '<div class="customs-filmix-item__header">' +
                                         '<div>' +
                                             '<div class="customs-filmix-item__ep-sub">ЕПІЗОД ' + ep.episode + '</div>' +
-                                            '<div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div>' +
+                                            '<div class="customs-filmix-item__title-wrap"><div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div></div>' +
                                         '</div>' +
                                         '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                                     '</div>' +
@@ -1348,7 +1377,7 @@
                                         '<span class="customs-filmix-item__ep-sub">' + ep.episode + ' СЕРІЯ</span>' +
                                         '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                                     '</div>' +
-                                    '<div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div>' +
+                                    '<div class="customs-filmix-item__title-wrap"><div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div></div>' +
                                 '</div>' +
                                 '<div class="customs-filmix-item__tags">' +
                                     '<span class="customs-filmix-tag tag--codec">' + meta.codec + '</span>' +
@@ -1376,7 +1405,7 @@
                                 '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                             '</div>' +
                             '<div class="customs-filmix-item__content">' +
-                                '<div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div>' +
+                                '<div class="customs-filmix-item__title-wrap"><div class="customs-filmix-item__title" title="' + epTitle + '">' + epTitle + '</div></div>' +
                                 '<div class="customs-filmix-item__tags">' +
                                     '<span class="customs-filmix-tag tag--codec">' + meta.codec + '</span>' +
                                     '<span class="customs-filmix-tag ' + meta.colorClass + '">' + meta.color + '</span>' +
@@ -1410,6 +1439,7 @@
                     el.on('hover:focus', function () {
                         last = el[0];
                         scroll.update(el, true);
+                        applyCardMarquee(el);
 
                         if (!probed && playUrl && playUrl.indexOf('http') === 0 && showSize) {
                             if (probeTimer) clearTimeout(probeTimer);
@@ -1424,6 +1454,16 @@
                                 }
                             }, 250);
                         }
+                    });
+
+                    el.on('hover:blur', function () {
+                        resetCardMarquee(el);
+                    });
+                    el.on('mouseenter', function () {
+                        applyCardMarquee(el);
+                    });
+                    el.on('mouseleave', function () {
+                        resetCardMarquee(el);
                     });
 
                     el.on('hover:enter', function () {
@@ -1518,7 +1558,7 @@
                     '<div class="customs-filmix-item__header">' +
                         '<div class="customs-filmix-item__voice-box">' +
                             '<span class="customs-filmix-item__lang ' + meta.langClass + '">' + meta.langBadge + '</span>' +
-                            '<span class="customs-filmix-item__voice"></span>' +
+                            '<div class="customs-filmix-item__voice-wrap"><span class="customs-filmix-item__voice"></span></div>' +
                         '</div>' +
                         '<span class="customs-filmix-item__quality ' + qClass + '">' + meta.qLabel + '</span>' +
                     '</div>' +
@@ -1564,6 +1604,7 @@
                 el.on('hover:focus', function () {
                     last = el[0];
                     scroll.update(el, true);
+                    applyCardMarquee(el);
 
                     if (!probed && v.url && v.url.indexOf('http') === 0 && showSize) {
                         if (probeTimer) clearTimeout(probeTimer);
@@ -1580,6 +1621,16 @@
                             }
                         }, 250);
                     }
+                });
+
+                el.on('hover:blur', function () {
+                    resetCardMarquee(el);
+                });
+                el.on('mouseenter', function () {
+                    applyCardMarquee(el);
+                });
+                el.on('mouseleave', function () {
+                    resetCardMarquee(el);
                 });
 
                 el.on('hover:enter', function () {
@@ -1803,14 +1854,22 @@
             onBack: link.emit.bind(link, 'back'),
             onLeft: link.emit.bind(link, 'left'),
             onActive: function () { link.active = link.items.indexOf(newRow); },
-            onToggle: function () { link.scroll.update(newRow.render(true)); }
+            onToggle: function () {
+                var dom = newRow.render(true);
+                if (dom && link.scroll && link.scroll.update) link.scroll.update(dom);
+            }
         });
         var isCurrentActive = (link.active === idx);
         oldRow.destroy();
         if (isCurrentActive) {
             newRow.toggle();
         }
-        if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(link.scroll.render(true));
+        if (Lampa.Layer && Lampa.Layer.visible && link.scroll && link.scroll.render) {
+            try {
+                var scrollDom = link.scroll.render(true);
+                if (scrollDom) Lampa.Layer.visible(scrollDom);
+            } catch (e) {}
+        }
     }
 
     function removeRow(link, row, rowId) {
@@ -1822,15 +1881,32 @@
             link.items.splice(idx, 1);
             if (link.active >= idx && link.active > 0) link.active--;
         }
-        if (row && row.destroy) row.destroy();
-        else if (row && row.render) {
-            var dom = row.render(true);
-            if (dom && dom.parentNode) dom.parentNode.removeChild(dom);
+        if (row && row.destroy) {
+            try { row.destroy(); } catch (e) {}
+        } else if (row && row.render) {
+            try {
+                var dom = row.render(true);
+                if (dom && dom.parentNode) dom.parentNode.removeChild(dom);
+            } catch (e) {}
         }
-        if (wasActive && link.items[link.active] && link.items[link.active].toggle) {
-            link.items[link.active].toggle();
+        if (wasActive && link.items && link.items[link.active] && link.items[link.active].toggle) {
+            try {
+                link.items[link.active].toggle();
+            } catch (e) {}
         }
-        if (link.scroll && link.scroll.update) link.scroll.update();
+        var currentItem = link.items && link.items[link.active];
+        if (currentItem && currentItem.render && link.scroll && link.scroll.update) {
+            try {
+                var currentDom = currentItem.render(true);
+                if (currentDom) link.scroll.update(currentDom);
+            } catch (e) {}
+        }
+        if (Lampa.Layer && Lampa.Layer.visible && link.scroll && link.scroll.render) {
+            try {
+                var layerDom = link.scroll.render(true);
+                if (layerDom) Lampa.Layer.visible(layerDom);
+            } catch (e) {}
+        }
     }
 
     // 1. Filmix: ЗАВЖДИ ПЕРШИМ під обкладинкою та кнопками (позиція №1)
@@ -1848,7 +1924,10 @@
             onBack: link.emit.bind(link, 'back'),
             onLeft: link.emit.bind(link, 'left'),
             onActive: function () { link.active = link.items.indexOf(row); },
-            onToggle: function () { link.scroll.update(row.render(true)); }
+            onToggle: function () {
+                var dom = row.render(true);
+                if (dom && link.scroll && link.scroll.update) link.scroll.update(dom);
+            }
         });
 
         if (startDom && startDom.parentNode) {
@@ -1859,7 +1938,12 @@
         link.rows.splice(insertIndex, 0, ROW_FILMIX);
         if (link.active >= insertIndex) link.active++;
 
-        if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(link.scroll.render(true));
+        if (Lampa.Layer && Lampa.Layer.visible && link.scroll && link.scroll.render) {
+            try {
+                var sDom = link.scroll.render(true);
+                if (sDom) Lampa.Layer.visible(sDom);
+            } catch (e) {}
+        }
     }
 
     // 2. Трейлери: ЗАВЖДИ ДРУГИМИ (слідом за Filmix)
@@ -1885,7 +1969,10 @@
             onBack: link.emit.bind(link, 'back'),
             onLeft: link.emit.bind(link, 'left'),
             onActive: function () { link.active = link.items.indexOf(row); },
-            onToggle: function () { link.scroll.update(row.render(true)); }
+            onToggle: function () {
+                var dom = row.render(true);
+                if (dom && link.scroll && link.scroll.update) link.scroll.update(dom);
+            }
         });
 
         if (anchorDom && anchorDom.parentNode) {
@@ -1896,7 +1983,12 @@
         link.rows.splice(insertIndex, 0, ROW_TRAILERS);
         if (link.active >= insertIndex) link.active++;
 
-        if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(link.scroll.render(true));
+        if (Lampa.Layer && Lampa.Layer.visible && link.scroll && link.scroll.render) {
+            try {
+                var tDom = link.scroll.render(true);
+                if (tDom) Lampa.Layer.visible(tDom);
+            } catch (e) {}
+        }
     }
 
     function onFull(e) {
@@ -2061,14 +2153,18 @@
                 'box-shadow:0 14px 35px rgba(0,0,0,0.6),0 0 25px rgba(255,255,255,0.22),inset 0 1px 2px rgba(255,255,255,0.4);z-index:5;}',
             '.customs-filmix-item__header{display:flex;align-items:center;justify-content:space-between;gap:.6em;}',
             '.customs-filmix-item__header > div{min-width:0;flex:1;}',
-            '.customs-filmix-item__voice-box{display:flex;align-items:center;gap:.5em;min-width:0;flex:1;}',
+            '.customs-filmix-item__voice-box{display:flex;align-items:center;gap:.5em;min-width:0;flex:1;overflow:hidden;}',
+            '.customs-filmix-item__voice-wrap{min-width:0;flex:1;overflow:hidden;white-space:nowrap;display:block;}',
             '.customs-filmix-item__ep-badge{font-size:.72em;font-weight:800;letter-spacing:.05em;padding:.18em .5em;border-radius:.35em;background:rgba(59,130,246,0.22);color:#60a5fa;border:1px solid rgba(59,130,246,0.38);text-transform:uppercase;flex-shrink:0;}',
             '.customs-filmix-item__lang{font-size:.72em;font-weight:800;padding:.15em .45em;border-radius:.35em;flex-shrink:0;letter-spacing:.03em;}',
             '.customs-filmix-item__lang.badge--ua{background:rgba(59,130,246,0.25);color:#93c5fd;border:1px solid rgba(96,165,250,0.4);}',
             '.customs-filmix-item__lang.badge--ru{background:rgba(148,163,184,0.18);color:#cbd5e1;border:1px solid rgba(148,163,184,0.25);}',
             '.customs-filmix-item__lang.badge--en{background:rgba(168,85,247,0.2);color:#d8b4fe;border:1px solid rgba(168,85,247,0.3);}',
-            '.customs-filmix-item__voice{font-size:.95em;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.4);}',
-            '.customs-filmix-item__title{font-size:.95em;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.5);line-height:1.3;}',
+            '.customs-filmix-item__voice{display:inline-block;max-width:100%;font-size:.95em;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.4);vertical-align:middle;will-change:transform;}',
+            '.customs-filmix-item__title-wrap{min-width:0;overflow:hidden;white-space:nowrap;display:block;}',
+            '.customs-filmix-item__title{display:inline-block;max-width:100%;font-size:.95em;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.5);line-height:1.3;vertical-align:middle;will-change:transform;}',
+            '.customs-filmix-item__voice.marquee,.customs-filmix-item__title.marquee{max-width:none !important;overflow:visible !important;text-overflow:clip !important;animation:customs-marquee var(--scroll-dur, 3.5s) cubic-bezier(0.42,0,0.58,1) infinite;animation-delay:0.35s;}',
+            '@keyframes customs-marquee{0%,20%{transform:translate3d(0,0,0);}55%,78%{transform:translate3d(var(--scroll-dist,0),0,0);}100%{transform:translate3d(0,0,0);}}',
             '.customs-filmix-item__ep-sub{font-size:.7em;font-weight:700;color:#93c5fd;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.15em;}',
             '.customs-filmix-item__quality{font-weight:800;padding:.2em .55em;border-radius:.45em;font-size:.75em;flex-shrink:0;letter-spacing:.04em;text-transform:uppercase;}',
             '.customs-filmix-item__quality.q-4k{background:linear-gradient(135deg,#fbbf24 0%,#d97706 100%);color:#000;box-shadow:0 2px 10px rgba(245,158,11,0.4);}',
