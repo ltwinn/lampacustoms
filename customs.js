@@ -533,6 +533,45 @@
         return Math.round(sizeMB) + ' МБ';
     }
 
+    function fixStreamUrl(url) {
+        if (!url) return '';
+        var u = url;
+        if (u.indexOf('//') === 0) {
+            u = (window.location && window.location.protocol === 'https:' ? 'https:' : 'http:') + u;
+        } else if (window.location && window.location.protocol === 'https:' && u.indexOf('http://') === 0) {
+            u = u.replace('http://', 'https://');
+        }
+        return u;
+    }
+
+    function randomHex(len) {
+        var chars = '0123456789abcdef';
+        var res = '';
+        for (var i = 0; i < len; i++) {
+            res += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return res;
+    }
+
+    function getFilmixMaxQuality() {
+        var status = {};
+        try {
+            var raw = (Lampa.Storage && Lampa.Storage.get) ? Lampa.Storage.get('filmix_status', '{}') : '{}';
+            status = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+        } catch (e) {
+            status = {};
+        }
+
+        if (status && status.is_pro_plus) return 2160;
+        if (status && status.is_pro) return 1080;
+        if (window.mod_filmix && window.mod_filmix.max_qualitie) {
+            return window.mod_filmix.max_qualitie;
+        }
+        var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
+        if (token) return 1080; // Безпечний ліміт для Filmix PRO (1080p, захист від 404 на 4K)
+        return 720;
+    }
+
     // Точний формат проксі Cloudflare Worker, як у online_mod
     function proxyFilmixUrl(link) {
         if (Lampa.Platform.is('android')) return link;
@@ -550,14 +589,21 @@
     }
 
     var filmixMemoryCache = {};
-    var FILM_CACHE_TIME = 1000 * 60 * 60 * 4; // 4 години
+    var FILM_CACHE_TIME = 1000 * 60 * 30; // 30 хв (CDN signed links мають обмежений термін дії)
+
+    function getFilmixCacheKey(movieId) {
+        var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
+        var tokenHash = token ? token.substring(0, 8) : 'guest';
+        return 'customs_filmix_v2_' + tokenHash + '_' + movieId;
+    }
 
     function getFilmixCache(movieId) {
         if (!movieId) return null;
-        if (filmixMemoryCache[movieId]) return filmixMemoryCache[movieId];
-        var cached = (Lampa.Storage && Lampa.Storage.cache) ? Lampa.Storage.cache('customs_filmix_' + movieId, FILM_CACHE_TIME) : null;
+        var key = getFilmixCacheKey(movieId);
+        if (filmixMemoryCache[key]) return filmixMemoryCache[key];
+        var cached = (Lampa.Storage && Lampa.Storage.cache) ? Lampa.Storage.cache(key, FILM_CACHE_TIME) : null;
         if (cached && typeof cached === 'object') {
-            filmixMemoryCache[movieId] = cached;
+            filmixMemoryCache[key] = cached;
             return cached;
         }
         return null;
@@ -565,9 +611,10 @@
 
     function setFilmixCache(movieId, data) {
         if (!movieId || !data) return;
-        filmixMemoryCache[movieId] = data;
+        var key = getFilmixCacheKey(movieId);
+        filmixMemoryCache[key] = data;
         if (Lampa.Storage && Lampa.Storage.set) {
-            Lampa.Storage.set('customs_filmix_' + movieId, data);
+            Lampa.Storage.set(key, data);
         }
     }
 
@@ -577,8 +624,8 @@
             return done(cached);
         }
 
-        var token = Lampa.Storage.get('filmix_token', '') + '';
-        var dev_id = '8a' + Math.random().toString(16).substring(2, 16);
+        var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
+        var dev_id = randomHex(16);
         var dev_token = '?user_dev_id=' + dev_id + '&user_dev_name=Xiaomi&user_dev_token=' + (token || 'aaaabbbbccccddddeeeeffffaaaabbbb') + '&user_dev_vendor=Xiaomi&user_dev_os=14&user_dev_apk=2.2.0&app_lang=ru-rRU';
 
         var title1 = cleanTitle(movie.title || movie.name);
@@ -644,7 +691,7 @@
             if (typeof data === 'string') {
                 try { data = JSON.parse(data); } catch (e) { data = null; }
             }
-            var maxQ = (window.mod_filmix && window.mod_filmix.max_qualitie) || 2160;
+            var maxQ = getFilmixMaxQuality();
             var showSize = flag('customs_filmix_show_size', true);
             var runtime = parseInt(movie.runtime) || ((movie.episode_run_time && movie.episode_run_time[0]) ? parseInt(movie.episode_run_time[0]) : (movie.number_of_seasons ? 45 : 115));
             var seen = {};
@@ -666,12 +713,18 @@
 
                         if (!qualities.length) {
                             var qm = item.link.match(/(?:_|\/)(2160|1440|1080|720|480)(?:p|v|\.mp4)/i);
-                            if (qm) qualities = [parseInt(qm[1])];
-                            else qualities = [720];
+                            if (qm) qualities = [parseInt(qm[1])].filter(function (n) { return n <= maxQ; });
+                            else qualities = [Math.min(720, maxQ)];
                         }
 
                         var highQ = qualities.filter(function (q) { return q >= 720; });
                         var finalQualities = highQ.length ? highQ : qualities;
+
+                        var qualityMap = {};
+                        finalQualities.forEach(function (q) {
+                            var qUrl = m ? item.link.replace(/\[[\d,]*\]/i, q) : (item.link.indexOf('%s') !== -1 ? item.link.replace(/%s/i, q) : item.link);
+                            qualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
+                        });
 
                         finalQualities.forEach(function (q) {
                             var voice = item.translation || 'Оригінал / Дубляж';
@@ -679,7 +732,8 @@
                             if (seen[key]) return;
                             seen[key] = true;
 
-                            var playUrl = m ? item.link.replace(/\[[\d,]*\]/i, q) : item.link;
+                            var playUrl = m ? item.link.replace(/\[[\d,]*\]/i, q) : (item.link.indexOf('%s') !== -1 ? item.link.replace(/%s/i, q) : item.link);
+                            playUrl = fixStreamUrl(playUrl);
                             var meta = parseStreamMetadata(voice, playUrl, q);
 
                             streams.push({
@@ -687,7 +741,8 @@
                                 meta: meta,
                                 quality: q >= 2160 ? '4K UHD' : q + 'p',
                                 raw_quality: q,
-                                url: playUrl
+                                url: playUrl,
+                                qualityMap: qualityMap
                             });
                         });
                     });
@@ -847,7 +902,7 @@
         if (!url || typeof XMLHttpRequest === 'undefined') return;
         try {
             var xhr = new XMLHttpRequest();
-            xhr.open('HEAD', url, true);
+            xhr.open('HEAD', fixStreamUrl(url), true);
             xhr.timeout = 3500;
             xhr.onload = function () {
                 if (xhr.status >= 200 && xhr.status < 300) {
@@ -1223,6 +1278,7 @@
 
                 episodes.forEach(function (ep) {
                     var playUrl = ep.link.indexOf('%s') !== -1 ? ep.link.replace(/%s/i, currentQuality) : ep.link;
+                    playUrl = fixStreamUrl(playUrl);
                     var meta = parseStreamMetadata(v.name, playUrl, currentQuality);
                     var qClass = currentQuality >= 2160 ? 'q-4k' : (currentQuality >= 1440 ? 'q-1440' : (currentQuality >= 1080 ? 'q-1080' : (currentQuality >= 720 ? 'q-720' : 'q-480')));
 
@@ -1377,23 +1433,36 @@
                         var info = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][ep.episode]) || null;
                         var curTitle = (info && info.name) ? (ep.episode + '. ' + info.name) : (ep.episode + ' серія');
 
+                        var epQualityMap = {};
+                        (v.qualities || [currentQuality]).forEach(function (q) {
+                            var qUrl = ep.link.indexOf('%s') !== -1 ? ep.link.replace(/%s/i, q) : ep.link;
+                            epQualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
+                        });
+
                         var epTimeline = getEpisodeTimeline(ep, movie);
                         var first = {
                             title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + curTitle + ' [' + meta.qLabel + ']',
-                            url: playUrl,
+                            url: fixStreamUrl(playUrl),
+                            quality: epQualityMap,
                             season: ep.season,
                             episode: ep.episode,
                             timeline: epTimeline
                         };
 
                         var playlist = episodes.map(function (e) {
-                            var eUrl = e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, currentQuality) : e.link;
+                            var eQualityMap = {};
+                            (v.qualities || [currentQuality]).forEach(function (q) {
+                                var qUrl = e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, q) : e.link;
+                                eQualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
+                            });
+                            var eUrl = fixStreamUrl(e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, currentQuality) : e.link);
                             var eInfo = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][e.episode]) || null;
                             var eTitle = (eInfo && eInfo.name) ? (e.episode + '. ' + eInfo.name) : (e.episode + ' серія');
                             var eTimeline = getEpisodeTimeline(e, movie);
                             return {
                                 title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + eTitle + ' [' + meta.qLabel + ']',
                                 url: eUrl,
+                                quality: eQualityMap,
                                 season: e.season,
                                 episode: e.episode,
                                 timeline: eTimeline
@@ -1518,7 +1587,8 @@
                     row.toggle();
                     Lampa.Player.play({
                         title: (movie.title || movie.name) + ' — ' + v.voice + ' [' + meta.qLabel + ']',
-                        url: v.url,
+                        url: fixStreamUrl(v.url),
+                        quality: v.qualityMap || null,
                         timeline: movTimeline || movie.timeline
                     });
                 });
