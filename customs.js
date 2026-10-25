@@ -7,7 +7,7 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.2.1';
+    var PLUGIN_VERSION = '1.2.2';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     var COMPONENT_NAME = 'lampa_customs';
@@ -588,23 +588,43 @@
         return proxy + 'enc2/' + encodeURIComponent(b64) + '/' + name + '?jacred.test';
     }
 
+    // Очищення застарілих кешів посилань Filmix з localStorage (підписані CDN-посилання швидко стають недійсними)
+    try {
+        if (typeof localStorage !== 'undefined') {
+            var keysToRemove = [];
+            for (var ki = 0; ki < localStorage.length; ki++) {
+                var kName = localStorage.key(ki);
+                if (kName && (kName.indexOf('customs_filmix_v') === 0 || (kName.indexOf('customs_filmix_') === 0 &&
+                    kName.indexOf('customs_filmix_series_') === -1 &&
+                    kName.indexOf('customs_filmix_enabled') === -1 &&
+                    kName.indexOf('customs_filmix_show_size') === -1 &&
+                    kName.indexOf('customs_filmix_theme') === -1 &&
+                    kName.indexOf('customs_filmix_series_style') === -1 &&
+                    kName.indexOf('customs_filmix_last_quality') === -1))) {
+                    keysToRemove.push(kName);
+                }
+            }
+            keysToRemove.forEach(function (k) {
+                try { localStorage.removeItem(k); } catch (e) {}
+            });
+        }
+    } catch (e) {}
+
     var filmixMemoryCache = {};
-    var FILM_CACHE_TIME = 1000 * 60 * 30; // 30 хв (CDN signed links мають обмежений термін дії)
+    var FILM_CACHE_TTL = 1000 * 60 * 15; // 15 хв тільки у пам'яті поточної сесії
 
     function getFilmixCacheKey(movieId) {
         var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
         var tokenHash = token ? token.substring(0, 8) : 'guest';
-        return 'customs_filmix_v2_' + tokenHash + '_' + movieId;
+        return 'customs_filmix_mem_' + tokenHash + '_' + movieId;
     }
 
     function getFilmixCache(movieId) {
         if (!movieId) return null;
         var key = getFilmixCacheKey(movieId);
-        if (filmixMemoryCache[key]) return filmixMemoryCache[key];
-        var cached = (Lampa.Storage && Lampa.Storage.cache) ? Lampa.Storage.cache(key, FILM_CACHE_TIME) : null;
-        if (cached && typeof cached === 'object') {
-            filmixMemoryCache[key] = cached;
-            return cached;
+        var entry = filmixMemoryCache[key];
+        if (entry && entry.time && (Date.now() - entry.time < FILM_CACHE_TTL)) {
+            return entry.data;
         }
         return null;
     }
@@ -612,10 +632,10 @@
     function setFilmixCache(movieId, data) {
         if (!movieId || !data) return;
         var key = getFilmixCacheKey(movieId);
-        filmixMemoryCache[key] = data;
-        if (Lampa.Storage && Lampa.Storage.set) {
-            Lampa.Storage.set(key, data);
-        }
+        filmixMemoryCache[key] = {
+            time: Date.now(),
+            data: data
+        };
     }
 
     function searchFilmix(movie, done) {
@@ -780,7 +800,10 @@
                 } else if (pl.playlist && Object.keys(pl.playlist).length > 0) {
                     // Серіали: повна ієрархія (сезони -> озвучення -> серії -> якості)
                     var seasons = [];
-                    var sKeys = Object.keys(pl.playlist);
+                    var sKeys = Object.keys(pl.playlist).filter(function (k) {
+                        var n = parseInt(k) || parseInt((k + '').replace(/\D+/g, '')) || 0;
+                        return n > 0;
+                    });
                     sKeys.sort(function (a, b) {
                         var na = parseInt(a) || parseInt((a + '').replace(/\D+/g, '')) || 0;
                         var nb = parseInt(b) || parseInt((b + '').replace(/\D+/g, '')) || 0;
@@ -1242,9 +1265,10 @@
                         row.toggle();
                     },
                     onSelect: function (item) {
+                        var prevSeason = seasons[currentSeasonIdx];
+                        var prevVoiceName = (prevSeason && prevSeason.voices && prevSeason.voices[currentVoiceIdx] && prevSeason.voices[currentVoiceIdx].name) || '';
                         currentSeasonIdx = item.index;
                         var s = seasons[currentSeasonIdx];
-                        var prevVoiceName = (s.voices[currentVoiceIdx] && s.voices[currentVoiceIdx].name) || '';
                         var matchedVoice = 0;
                         for (var i = 0; i < s.voices.length; i++) {
                             if (s.voices[i].name === prevVoiceName) {
@@ -1506,7 +1530,6 @@
 
                     el.on('hover:enter', function () {
                         last = el[0];
-                        row.toggle();
 
                         var info = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][ep.episode]) || null;
                         var curTitle = (info && info.name) ? (ep.episode + '. ' + info.name) : (ep.episode + ' серія');
@@ -1517,13 +1540,17 @@
                             epQualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
                         });
 
+                        var targetPlayUrl = fixStreamUrl(playUrl);
+                        if (!targetPlayUrl && epQualityMap) {
+                            var qk = Object.keys(epQualityMap);
+                            if (qk.length) targetPlayUrl = epQualityMap[qk[0]];
+                        }
+
                         var epTimeline = getEpisodeTimeline(ep, movie);
                         var first = {
                             title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + curTitle + ' [' + meta.qLabel + ']',
-                            url: fixStreamUrl(playUrl),
+                            url: targetPlayUrl,
                             quality: epQualityMap,
-                            season: ep.season,
-                            episode: ep.episode,
                             timeline: epTimeline
                         };
 
@@ -1534,6 +1561,10 @@
                                 eQualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
                             });
                             var eUrl = fixStreamUrl(e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, currentQuality) : e.link);
+                            if (!eUrl && eQualityMap) {
+                                var eqk = Object.keys(eQualityMap);
+                                if (eqk.length) eUrl = eQualityMap[eqk[0]];
+                            }
                             var eInfo = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][e.episode]) || null;
                             var eTitle = (eInfo && eInfo.name) ? (e.episode + '. ' + eInfo.name) : (e.episode + ' серія');
                             var eTimeline = getEpisodeTimeline(e, movie);
@@ -1541,8 +1572,6 @@
                                 title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + eTitle + ' [' + meta.qLabel + ']',
                                 url: eUrl,
                                 quality: eQualityMap,
-                                season: e.season,
-                                episode: e.episode,
                                 timeline: eTimeline
                             };
                         });
@@ -1670,7 +1699,6 @@
 
                 el.on('hover:enter', function () {
                     last = el[0];
-                    row.toggle();
                     Lampa.Player.play({
                         title: (movie.title || movie.name) + ' — ' + v.voice + ' [' + meta.qLabel + ']',
                         url: fixStreamUrl(v.url),
