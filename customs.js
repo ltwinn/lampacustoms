@@ -7,12 +7,13 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.2.2';
+    var PLUGIN_VERSION = '1.4.0';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     var COMPONENT_NAME = 'lampa_customs';
     var ROW_TRAILERS = 'customs_trailers';
     var ROW_FILMIX = 'customs_filmix';
+    var ROW_TORRENTS = 'customs_torrents';
 
     var CACHE_KEY = 'ua_trailers_cache_v3';
     var CACHE_TTL = 1000 * 60 * 60 * 24 * 7;
@@ -79,6 +80,130 @@
     function youtubeKey() {
         if (!flag('ua_trailers_youtube', true)) return '';
         return (Lampa.Storage.get('ua_trailers_yt_key', '') + '').trim();
+    }
+
+    // ---------- Головна сторінка: горизонтальні смужки ----------
+
+    var MAIN_STRIPS = [
+        { id: 'popular_movie', name: 'Популярні фільми', keywords: ['популярні фільми', 'популярные фильмы', 'popular movie'] },
+        { id: 'popular_tv', name: 'Популярні серіали', keywords: ['популярні серіали', 'популярные сериалы', 'popular tv', 'popular show'] },
+        { id: 'now_watch', name: 'Зараз дивляться', keywords: ['зараз дивляться', 'сейчас смотрят', 'now watch', 'now playing'] },
+        { id: 'trend_day', name: 'В тренді за день', keywords: ['в тренді за день', 'в тренде за день', 'trending day', 'trend day'] },
+        { id: 'trend_week', name: 'В тренді за тиждень', keywords: ['в тренді за тиждень', 'в тренде за неделю', 'trending week', 'trend week'] },
+        { id: 'top_movie', name: 'Кращі фільми', keywords: ['кращі фільми', 'лучшие фильмы', 'top movie', 'top rated movie'] },
+        { id: 'top_tv', name: 'Кращі серіали', keywords: ['кращі серіали', 'лучшие сериалы', 'top tv', 'top rated tv'] },
+        { id: 'upcoming', name: 'Очікувані / Скоро', keywords: ['очікувані', 'ожидаемые', 'скоро', 'upcoming'] },
+        { id: 'history_continue', name: 'Продовжити перегляд', keywords: ['продовжити', 'продолжить', 'історія', 'история', 'history'] },
+        { id: 'bookmarks', name: 'Закладки', keywords: ['закладки', 'bookmarks', 'закладка'] },
+        { id: 'genres', name: 'Жанрові добірки', keywords: ['жанр', 'комеді', 'комеди', 'бойовик', 'боевик', 'трилер', 'триллер', 'драм', 'фантастик', 'мультфільм', 'мультфильм', 'аніме', 'аниме'] }
+    ];
+
+    function getStripId(title) {
+        if (!title) return 'other';
+        var lower = (title + '').toLowerCase();
+        for (var i = 0; i < MAIN_STRIPS.length; i++) {
+            var s = MAIN_STRIPS[i];
+            for (var j = 0; j < s.keywords.length; j++) {
+                if (lower.indexOf(s.keywords[j]) !== -1) return s.id;
+            }
+        }
+        return 'other';
+    }
+
+    function getMainStripsDefaultOrder() {
+        return MAIN_STRIPS.map(function (s) { return s.id; });
+    }
+
+    function getMainStripsOrder() {
+        var def = getMainStripsDefaultOrder();
+        var saved = (Lampa.Storage && Lampa.Storage.get) ? Lampa.Storage.get('customs_main_strips_order', def) : def;
+        if (!Array.isArray(saved) || !saved.length) return def;
+        def.forEach(function (sid) {
+            if (saved.indexOf(sid) === -1) saved.push(sid);
+        });
+        return saved;
+    }
+
+    function isStripVisible(stripId) {
+        if (!flag('customs_main_strips_filter_enabled', true)) return true;
+        if (stripId === 'other') return true;
+        return flag('customs_strip_' + stripId, true);
+    }
+
+    function openStripsOrderDialog() {
+        var order = getMainStripsOrder();
+        var menu = order.map(function (sid, idx) {
+            var stripInfo = null;
+            for (var i = 0; i < MAIN_STRIPS.length; i++) {
+                if (MAIN_STRIPS[i].id === sid) { stripInfo = MAIN_STRIPS[i]; break; }
+            }
+            var title = stripInfo ? stripInfo.name : sid;
+            var vis = isStripVisible(sid);
+            return {
+                title: (idx + 1) + '. ' + title + (vis ? '' : ' (Приховано)'),
+                id: sid,
+                index: idx
+            };
+        });
+
+        Lampa.Select.show({
+            title: 'Порядок смужок (виберіть рядок)',
+            items: menu,
+            onBack: function () {
+                Lampa.Controller.toggle('settings');
+            },
+            onSelect: function (selectedItem) {
+                var sid = selectedItem.id;
+                var stripInfo = null;
+                for (var i = 0; i < MAIN_STRIPS.length; i++) {
+                    if (MAIN_STRIPS[i].id === sid) { stripInfo = MAIN_STRIPS[i]; break; }
+                }
+                var name = stripInfo ? stripInfo.name : sid;
+                var isVis = isStripVisible(sid);
+
+                var actions = [
+                    { title: '⬆️ Підняти вище', action: 'up' },
+                    { title: '⬇️ Опустити нижче', action: 'down' },
+                    { title: '🔝 Перемістити на 1-ше місце', action: 'top' },
+                    { title: '🔻 Перемістити в кінець', action: 'bottom' },
+                    { title: isVis ? '👁️ Приховати смужку' : '✅ Показувати смужку', action: 'toggle_vis' }
+                ];
+
+                Lampa.Select.show({
+                    title: name,
+                    items: actions,
+                    onBack: function () {
+                        openStripsOrderDialog();
+                    },
+                    onSelect: function (act) {
+                        var currOrder = getMainStripsOrder().slice();
+                        var pos = currOrder.indexOf(sid);
+                        if (pos !== -1) {
+                            if (act.action === 'up' && pos > 0) {
+                                var tmp = currOrder[pos - 1];
+                                currOrder[pos - 1] = currOrder[pos];
+                                currOrder[pos] = tmp;
+                            } else if (act.action === 'down' && pos < currOrder.length - 1) {
+                                var tmp = currOrder[pos + 1];
+                                currOrder[pos + 1] = currOrder[pos];
+                                currOrder[pos] = tmp;
+                            } else if (act.action === 'top') {
+                                currOrder.splice(pos, 1);
+                                currOrder.unshift(sid);
+                            } else if (act.action === 'bottom') {
+                                currOrder.splice(pos, 1);
+                                currOrder.push(sid);
+                            } else if (act.action === 'toggle_vis') {
+                                var currentFlag = isStripVisible(sid);
+                                Lampa.Storage.set('customs_strip_' + sid, !currentFlag);
+                            }
+                            Lampa.Storage.set('customs_main_strips_order', currOrder);
+                        }
+                        openStripsOrderDialog();
+                    }
+                });
+            }
+        });
     }
 
     function addSettings() {
@@ -184,6 +309,97 @@
                 $('.customs-filmix').removeClass('customs-theme-hybrid customs-theme-glass customs-theme-lampa')
                     .addClass('customs-theme-' + theme);
             }
+        });
+
+        // Розділ: Торренти (TorrServer Speed & Size)
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_title_torrents', type: 'title' },
+            field: { name: 'Торренти (TorrServer Speed & Size)' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_torrents_enabled', type: 'trigger', default: true },
+            field: { name: 'Стрічка торрентів', description: 'Показувати стрічку роздач, відсортованих за вагою з індикатором швидкості' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_torrserver_url', type: 'input', default: '' },
+            field: { name: 'Адреса TorrServer', description: 'Залиште порожнім для авто-визначення з налаштувань Lampa' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_parser_url', type: 'input', default: '' },
+            field: { name: 'Адреса парсера торрентів', description: 'Залиште порожнім для авто з Lampa або вкажіть JacRed (наприклад, https://jacred.xyz)' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: {
+                name: 'customs_torrserver_test_btn',
+                type: 'static'
+            },
+            field: {
+                name: '⚡️ Перевірити зв\'язок з TorrServer',
+                description: 'Натисніть для перевірки доступності торрент-сервера'
+            },
+            onRender: function (item) {
+                item.on('hover:enter', function () {
+                    var u = getTorrServerUrl();
+                    var net = new Lampa.Reguest();
+                    net.timeout(4000);
+                    net.silent(u + '/echo', function () {
+                        Lampa.Noty.show('🟢 TorrServer доступний: ' + u);
+                    }, function () {
+                        net.silent(u + '/settings', function () {
+                            Lampa.Noty.show('🟢 TorrServer доступний: ' + u);
+                        }, function () {
+                            Lampa.Noty.show('🔴 Немає зв\'язку з TorrServer (' + u + ')');
+                        });
+                    });
+                });
+            }
+        });
+
+        // Розділ: Головна сторінка (горизонтальні смужки)
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_title_main_strips', type: 'title' },
+            field: { name: 'Головна сторінка (Смужки контенту)' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_main_strips_filter_enabled', type: 'trigger', default: true },
+            field: { name: 'Керування смужками', description: 'Увімкнути сортування та приховування смужок на головному екрані' }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: {
+                name: 'customs_main_order_btn',
+                type: 'static'
+            },
+            field: {
+                name: 'Порядок відображення смужок',
+                description: 'Натисніть для зміни черговості рядків або підняття на 1-ше місце'
+            },
+            onRender: function (item) {
+                item.on('hover:enter', function () {
+                    openStripsOrderDialog();
+                });
+            }
+        });
+
+        MAIN_STRIPS.forEach(function (s) {
+            Lampa.SettingsApi.addParam({
+                component: COMPONENT_NAME,
+                param: { name: 'customs_strip_' + s.id, type: 'trigger', default: true },
+                field: { name: 'Показувати «' + s.name + '»' }
+            });
         });
     }
 
@@ -1759,6 +1975,645 @@
         return row;
     }
 
+    // ---------- Модуль Торрентів (TorrServer Speed & Size) ----------
+
+    var torrServerSpeedCache = {};
+
+    function getTorrServerUrl() {
+        var custom = Lampa.Storage.get('customs_torrserver_url', '');
+        if (custom && typeof custom === 'string' && custom.trim().length > 0) {
+            return custom.trim().replace(/\/+$/, '');
+        }
+        var def = Lampa.Storage.get('torrserver_url') || Lampa.Storage.get('torrserver_url_two') || 'http://127.0.0.1:8090';
+        return (def + '').trim().replace(/\/+$/, '');
+    }
+
+    function getParserUrl() {
+        var custom = Lampa.Storage.get('customs_parser_url', '');
+        if (custom && typeof custom === 'string' && custom.trim().length > 0) {
+            return custom.trim().replace(/\/+$/, '');
+        }
+        var def = Lampa.Storage.get('parser_jackett_url') || Lampa.Storage.get('parser_url') || 'https://jacred.xyz';
+        return (def + '').trim().replace(/\/+$/, '');
+    }
+
+    function getParserKey() {
+        var custom = Lampa.Storage.get('customs_parser_key', '');
+        if (custom && typeof custom === 'string' && custom.trim().length > 0) {
+            return custom.trim();
+        }
+        var def = Lampa.Storage.get('parser_jackett_key') || Lampa.Storage.get('parser_key') || '';
+        return (def + '').trim();
+    }
+
+    function parseSizeToBytes(raw) {
+        if (typeof raw === 'number') return raw;
+        if (!raw) return 0;
+        var str = (raw + '').toLowerCase().trim();
+        var match = str.match(/([\d\.,]+)\s*([kmgtкмгт][bб]?)/i);
+        if (!match) {
+            var numOnly = parseFloat(str.replace(',', '.'));
+            return isNaN(numOnly) ? 0 : numOnly;
+        }
+        var val = parseFloat(match[1].replace(',', '.'));
+        var unit = match[2];
+        if (unit.indexOf('t') !== -1 || unit.indexOf('т') !== -1) return val * 1024 * 1024 * 1024 * 1024;
+        if (unit.indexOf('g') !== -1 || unit.indexOf('г') !== -1) return val * 1024 * 1024 * 1024;
+        if (unit.indexOf('m') !== -1 || unit.indexOf('м') !== -1) return val * 1024 * 1024;
+        if (unit.indexOf('k') !== -1 || unit.indexOf('к') !== -1) return val * 1024;
+        return val;
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes || bytes <= 0) return '0 МБ';
+        if (bytes >= 1024 * 1024 * 1024 * 1024) {
+            return (bytes / (1024 * 1024 * 1024 * 1024)).toFixed(2) + ' ТБ';
+        }
+        if (bytes >= 1024 * 1024 * 1024) {
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' ГБ';
+        }
+        if (bytes >= 1024 * 1024) {
+            return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+        }
+        return (bytes / 1024).toFixed(0) + ' КБ';
+    }
+
+    function cleanEpisodeTitle(path, idx) {
+        if (!path) return 'Серія ' + (idx || 1);
+        var clean = path.replace(/^.*[\/\\]/, '');
+        var match = clean.match(/s\d+e(\d+)/i) || clean.match(/[eе](\d+)/i) || clean.match(/(\d+)\s*(?:сер|ep)/i);
+        if (match) {
+            return 'Серія ' + parseInt(match[1], 10);
+        }
+        clean = clean.replace(/\.[a-zA-Z0-9]+$/, '');
+        return clean.length > 32 ? (clean.slice(0, 30) + '...') : clean;
+    }
+
+    function cleanFileName(title) {
+        if (!title) return 'video';
+        return (title + '').replace(/[^\w\s\u0400-\u04FF\.\-]/g, '').trim().replace(/\s+/g, '.');
+    }
+
+    function extractTorrentTags(title) {
+        var str = (title || '').toLowerCase();
+        var tags = {
+            season: '',
+            quality: '',
+            codecs: [],
+            isUkr: false
+        };
+
+        if (/[іїєґ]|(?:\b|_)(?:ua|ukr|ukrainian)(?:\b|_)|укр|україн|\+ua/i.test(title)) {
+            tags.isUkr = true;
+        }
+
+        var sMatch = title.match(/s(\d{1,2})-(\d{1,2})/i) || title.match(/сезон\s*(\d{1,2})-(\d{1,2})/i);
+        if (sMatch) {
+            tags.season = 'S' + parseInt(sMatch[1], 10) + '-' + parseInt(sMatch[2], 10);
+        } else {
+            var sSingle = title.match(/s(\d{1,2})/i) || title.match(/сезон\s*(\d{1,2})/i);
+            if (sSingle) {
+                tags.season = 'S' + parseInt(sSingle[1], 10);
+            }
+        }
+
+        if (str.indexOf('2160p') !== -1 || str.indexOf('4k') !== -1 || str.indexOf('uhd') !== -1) {
+            tags.quality = '4K UHD';
+        } else if (str.indexOf('1080p') !== -1 || str.indexOf('1080i') !== -1 || str.indexOf('fhd') !== -1) {
+            tags.quality = 'FHD 1080p';
+        } else if (str.indexOf('720p') !== -1) {
+            tags.quality = 'HD 720p';
+        } else {
+            tags.quality = 'SD';
+        }
+
+        if (str.indexOf('hdr10+') !== -1) tags.codecs.push('HDR10+');
+        else if (str.indexOf('hdr') !== -1) tags.codecs.push('HDR');
+
+        if (str.indexOf('dovi') !== -1 || str.indexOf('dolby vision') !== -1) tags.codecs.push('DV');
+        if (str.indexOf('hevc') !== -1 || str.indexOf('h.265') !== -1 || str.indexOf('x265') !== -1) tags.codecs.push('HEVC');
+        if (str.indexOf('remux') !== -1) tags.codecs.push('Remux');
+        else if (str.indexOf('bdrip') !== -1 || str.indexOf('bluray') !== -1) tags.codecs.push('BDRip');
+        else if (str.indexOf('web-dl') !== -1 || str.indexOf('webdl') !== -1) tags.codecs.push('WEB-DL');
+
+        return tags;
+    }
+
+    function calculateRequiredSpeed(item, movie, isSeries) {
+        var durationMinutes = 110;
+        if (isSeries) {
+            durationMinutes = (movie.episode_run_time && movie.episode_run_time[0]) || 45;
+        } else if (movie.runtime && movie.runtime > 20) {
+            durationMinutes = movie.runtime;
+        }
+
+        var episodes = 1;
+        if (isSeries) {
+            var epMatch = item.title.match(/(\d{1,3})\s*(?:сер|ep)/i);
+            if (epMatch) {
+                episodes = parseInt(epMatch[1], 10) || 8;
+            } else if (item.tags && item.tags.season && item.tags.season.indexOf('-') !== -1) {
+                episodes = 24;
+            } else {
+                episodes = 8;
+            }
+        }
+
+        var singleEpisodeBytes = item.sizeBytes / Math.max(1, episodes);
+        var durationSec = Math.max(600, durationMinutes * 60);
+        var requiredBytesPerSec = (singleEpisodeBytes / durationSec) * 1.3;
+        return Math.max(400 * 1024, requiredBytesPerSec);
+    }
+
+    function normalizeTorrentItems(items, movie, isSeries) {
+        if (!items || !items.length) return [];
+        var result = [];
+
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (!it) continue;
+
+            var rawTitle = it.Title || it.title || '';
+            if (!rawTitle) continue;
+
+            var magnet = it.MagnetUri || it.magnet || it.Link || it.link || '';
+            if (!magnet) continue;
+
+            var sizeRaw = it.Size || it.size || 0;
+            var sizeBytes = parseSizeToBytes(sizeRaw);
+            if (sizeBytes <= 0) continue;
+
+            var seeds = parseInt(it.Seeders || it.seeders || 0, 10);
+            if (isNaN(seeds)) seeds = 0;
+
+            var leech = parseInt(it.Peers || it.peers || it.leechers || 0, 10);
+            if (isNaN(leech)) leech = 0;
+
+            var tracker = it.Tracker || it.tracker || '';
+            if (!tracker && typeof magnet === 'string') {
+                if (magnet.indexOf('toloka') !== -1) tracker = 'toloka';
+                else if (magnet.indexOf('rutor') !== -1) tracker = 'rutor';
+                else if (magnet.indexOf('rutracker') !== -1) tracker = 'rutracker';
+            }
+            if (!tracker) tracker = 'torrent';
+
+            var tags = extractTorrentTags(rawTitle);
+
+            result.push({
+                title: rawTitle,
+                magnet: magnet,
+                sizeBytes: sizeBytes,
+                sizeStr: formatBytes(sizeBytes),
+                seeds: seeds,
+                leech: leech,
+                tracker: tracker,
+                tags: tags
+            });
+        }
+
+        // Сортування суворо від більшої ваги до меншої
+        result.sort(function (a, b) {
+            return b.sizeBytes - a.sizeBytes;
+        });
+
+        return result.slice(0, 15);
+    }
+
+    function searchTorrents(movie, isSeries, callback) {
+        var parserUrl = getParserUrl();
+        var parserKey = getParserKey();
+        var query = (movie.title || movie.name || '').trim();
+        if (!query) query = (movie.original_title || movie.original_name || '').trim();
+        if (!query) return callback([]);
+
+        var network = new Lampa.Reguest();
+        var searchUrl;
+
+        if (parserUrl.indexOf(':8090') !== -1 || parserUrl.indexOf('torrserver') !== -1) {
+            searchUrl = parserUrl + '/search?query=' + encodeURIComponent(query);
+        } else {
+            searchUrl = parserUrl + '/api/v2.0/indexers/all/results?Query=' + encodeURIComponent(query);
+            if (parserKey) searchUrl += '&apikey=' + encodeURIComponent(parserKey);
+        }
+
+        network.timeout(10000);
+        network.silent(searchUrl, function (res) {
+            var items = [];
+            if (res && res.Results && res.Results.length) {
+                items = res.Results;
+            } else if (res && res.results && res.results.length) {
+                items = res.results;
+            } else if (Array.isArray(res)) {
+                items = res;
+            }
+
+            var parsed = normalizeTorrentItems(items, movie, isSeries);
+            if (parsed.length > 0) {
+                callback(parsed);
+            } else {
+                var origQuery = (movie.original_title || movie.original_name || '').trim();
+                if (origQuery && origQuery !== query) {
+                    var fbUrl = parserUrl + '/api/v2.0/indexers/all/results?Query=' + encodeURIComponent(origQuery);
+                    if (parserKey) fbUrl += '&apikey=' + encodeURIComponent(parserKey);
+                    network.silent(fbUrl, function (res2) {
+                        var items2 = (res2 && (res2.Results || res2.results)) || (Array.isArray(res2) ? res2 : []);
+                        callback(normalizeTorrentItems(items2, movie, isSeries));
+                    }, function () {
+                        callback([]);
+                    });
+                } else {
+                    callback([]);
+                }
+            }
+        }, function () {
+            callback([]);
+        });
+    }
+
+    function probeTorrServerSpeed(item, movie, isSeries, callback) {
+        if (!item || !item.magnet) return callback(null);
+        var torrUrl = getTorrServerUrl();
+
+        var net = new Lampa.Reguest();
+        net.timeout(5000);
+
+        var statUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&stat';
+
+        net.silent(statUrl, function (res) {
+            var speed = 0;
+            var seeders = 0;
+            if (res) {
+                speed = res.download_speed || 0;
+                seeders = res.connected_seeders || res.active_peers || 0;
+            }
+
+            var reqSpeed = calculateRequiredSpeed(item, movie, isSeries);
+            var ratio = reqSpeed > 0 ? (speed / reqSpeed) : 1;
+
+            var status = 'red';
+            if (ratio >= 1.3 && speed > 800 * 1024) {
+                status = 'green';
+            } else if (ratio >= 0.8 && speed > 300 * 1024) {
+                status = 'yellow';
+            }
+
+            var result = {
+                speed: speed,
+                seeders: seeders,
+                reqSpeed: reqSpeed,
+                ratio: ratio,
+                status: status
+            };
+
+            callback(result);
+        }, function () {
+            callback({
+                speed: 0,
+                seeders: item.seeds || 0,
+                reqSpeed: calculateRequiredSpeed(item, movie, isSeries),
+                ratio: 0,
+                status: 'red'
+            });
+        });
+    }
+
+    function updateCardSpeedBadge(cardEl, res) {
+        if (!cardEl || !cardEl.length || !res) return;
+        var speedBadge = cardEl.find('.customs-torrent-speed');
+        speedBadge.removeClass('customs-speed--idle customs-speed--testing customs-speed--green customs-speed--yellow customs-speed--red');
+
+        var speedText = '';
+        var mbps = (res.speed / (1024 * 1024)).toFixed(1);
+
+        if (res.status === 'green') {
+            speedBadge.addClass('customs-speed--green');
+            var pct = Math.round(res.ratio * 100);
+            speedText = mbps + ' MB/s ✓ Запас ' + pct + '%';
+        } else if (res.status === 'yellow') {
+            speedBadge.addClass('customs-speed--yellow');
+            speedText = mbps + ' MB/s ⚠️ Впритул';
+        } else {
+            speedBadge.addClass('customs-speed--red');
+            if (res.speed > 0) {
+                speedText = mbps + ' MB/s ✕ Замало';
+            } else {
+                speedText = '0 MB/s ✕ Повільно';
+            }
+        }
+
+        speedBadge.find('.customs-speed-text').text(speedText);
+    }
+
+    function handleTorrentPlayback(item, movie, isSeries) {
+        var torrUrl = getTorrServerUrl();
+        if (!item || !item.magnet) {
+            Lampa.Noty.show('Не вдалося отримати посилання на торент');
+            return;
+        }
+
+        if (!isSeries) {
+            var playUrl = torrUrl + '/stream/' + encodeURIComponent(cleanFileName(item.title) + '.mkv') + '?link=' + encodeURIComponent(item.magnet) + '&play';
+            Lampa.Player.play({
+                title: item.title,
+                url: playUrl
+            });
+            Lampa.Player.playlist([{
+                title: item.title,
+                url: playUrl
+            }]);
+        } else {
+            Lampa.Loading.start(function () {});
+            var statUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&stat';
+            var net = new Lampa.Reguest();
+            net.timeout(7000);
+
+            net.silent(statUrl, function (data) {
+                Lampa.Loading.stop();
+                var files = (data && data.file_stats) || [];
+                var videoFiles = files.filter(function (f) {
+                    return f && f.path && /\.(mkv|mp4|avi|ts|m2ts|mov)$/i.test(f.path);
+                });
+
+                videoFiles.sort(function (a, b) {
+                    return a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' });
+                });
+
+                if (videoFiles.length > 1) {
+                    var selectItems = videoFiles.map(function (f, idx) {
+                        return {
+                            title: cleanEpisodeTitle(f.path, idx + 1),
+                            subtitle: formatBytes(f.length),
+                            file: f,
+                            index: f.id
+                        };
+                    });
+
+                    Lampa.Select.show({
+                        title: 'Виберіть серію',
+                        items: selectItems,
+                        onSelect: function (sel) {
+                            playSeriesTorrentFile(item, sel.file, videoFiles, torrUrl);
+                        },
+                        onBack: function () {
+                            Lampa.Controller.toggle(ROW_TORRENTS);
+                        }
+                    });
+                } else if (videoFiles.length === 1) {
+                    playSeriesTorrentFile(item, videoFiles[0], videoFiles, torrUrl);
+                } else {
+                    playSeriesTorrentFile(item, { id: 0, path: item.title + '.mkv' }, [], torrUrl);
+                }
+            }, function () {
+                Lampa.Loading.stop();
+                playSeriesTorrentFile(item, { id: 0, path: item.title + '.mkv' }, [], torrUrl);
+            });
+        }
+    }
+
+    function playSeriesTorrentFile(item, file, allFiles, torrUrl) {
+        var fileId = (file && typeof file.id !== 'undefined') ? file.id : 0;
+        var fileName = (file && file.path) ? file.path.replace(/^.*[\/\\]/, '') : (cleanFileName(item.title) + '.mkv');
+
+        var playUrl = torrUrl + '/stream/' + encodeURIComponent(fileName) + '?link=' + encodeURIComponent(item.magnet) + '&index=' + fileId + '&play';
+
+        var playlist = [];
+        if (allFiles && allFiles.length) {
+            for (var i = 0; i < allFiles.length; i++) {
+                var f = allFiles[i];
+                var fName = (f.path || '').replace(/^.*[\/\\]/, '');
+                var fUrl = torrUrl + '/stream/' + encodeURIComponent(fName) + '?link=' + encodeURIComponent(item.magnet) + '&index=' + f.id + '&play';
+                playlist.push({
+                    title: cleanEpisodeTitle(f.path, i + 1),
+                    url: fUrl
+                });
+            }
+        } else {
+            playlist.push({
+                title: item.title,
+                url: playUrl
+            });
+        }
+
+        Lampa.Player.play({
+            title: cleanEpisodeTitle(file ? file.path : '', 1) + ' — ' + item.title,
+            url: playUrl
+        });
+        Lampa.Player.playlist(playlist);
+    }
+
+    function createTorrentsRow(items, movie, isSeries) {
+        var row = new Lampa.Emit();
+        var html = Lampa.Template.get('items_line', { title: '⚡️ Торренти (TorrServer)' });
+        var scroll = new Lampa.Scroll({ horizontal: true, step: 320 });
+        var last = null;
+        var focusTimer = null;
+
+        html.addClass('customs-torrents');
+
+        for (var i = 0; i < items.length; i++) {
+            (function (item) {
+                var card = $('<div class="customs-torrent-card selector">' +
+                    '<div class="customs-torrent-card__title">' + Lampa.Utils.escapeHtml(item.title) + '</div>' +
+                    '<div class="customs-torrent-card__badges"></div>' +
+                    '<div class="customs-torrent-card__foot">' +
+                        '<div class="customs-torrent-card__meta">' +
+                            '<span class="customs-torrent-tracker">' + Lampa.Utils.escapeHtml(item.tracker) + '</span>' +
+                            '<span class="customs-torrent-seeds">S: ' + item.seeds + ' / L: ' + item.leech + '</span>' +
+                        '</div>' +
+                        '<div class="customs-torrent-card__status">' +
+                            '<div class="customs-torrent-speed customs-speed--idle">' +
+                                '<span class="customs-speed-dot"></span>' +
+                                '<span class="customs-speed-text">⚡️ Перевірити</span>' +
+                            '</div>' +
+                            '<span class="customs-torrent-size">' + item.sizeStr + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>');
+
+                var badgesBox = card.find('.customs-torrent-card__badges');
+                if (item.tags.season) {
+                    badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--season">' + item.tags.season + '</span>');
+                }
+                if (item.tags.quality) {
+                    badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--quality">' + item.tags.quality + '</span>');
+                }
+                if (item.tags.codecs && item.tags.codecs.length) {
+                    for (var c = 0; c < item.tags.codecs.length; c++) {
+                        badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--codec">' + item.tags.codecs[c] + '</span>');
+                    }
+                }
+                if (item.tags.isUkr) {
+                    badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--ukr">🇺🇦 UKR</span>');
+                }
+
+                if (torrServerSpeedCache[item.magnet]) {
+                    updateCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
+                }
+
+                card.on('hover:focus', function () {
+                    last = this;
+                    scroll.update($(this), true);
+
+                    if (focusTimer) clearTimeout(focusTimer);
+                    focusTimer = setTimeout(function () {
+                        if (torrServerSpeedCache[item.magnet]) {
+                            updateCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
+                        } else {
+                            var speedBadge = card.find('.customs-torrent-speed');
+                            speedBadge.removeClass('customs-speed--idle customs-speed--green customs-speed--yellow customs-speed--red').addClass('customs-speed--testing');
+                            speedBadge.find('.customs-speed-text').text('Тест бітрейту...');
+
+                            probeTorrServerSpeed(item, movie, isSeries, function (res) {
+                                torrServerSpeedCache[item.magnet] = res;
+                                updateCardSpeedBadge(card, res);
+                            });
+                        }
+                    }, 700);
+                });
+
+                card.on('hover:enter', function () {
+                    handleTorrentPlayback(item, movie, isSeries);
+                });
+
+                scroll.append(card[0]);
+            })(items[i]);
+        }
+
+        html.find('.items-line__body').append(scroll.render(true));
+
+        row.create = function () {};
+        row.render = function (js) { return js ? html[0] : html; };
+        row.toggle = function () {
+            Lampa.Controller.add(ROW_TORRENTS, {
+                link: row,
+                toggle: function () {
+                    var focusTarget = (last && $.contains(html[0], last)) ? last : false;
+                    Lampa.Controller.collectionSet(html);
+                    Lampa.Controller.collectionFocus(focusTarget, html);
+                    row.emit('active');
+                    row.emit('toggle');
+                },
+                update: function () {},
+                right: function () { if (Navigator.canmove('right')) Navigator.move('right'); },
+                left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else row.emit('left'); },
+                down: function () { if (Navigator.canmove('down')) Navigator.move('down'); else row.emit('down'); },
+                up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else row.emit('up'); },
+                back: function () { row.emit('back'); }
+            });
+            Lampa.Controller.toggle(ROW_TORRENTS);
+        };
+
+        row.destroy = function () {
+            if (focusTimer) clearTimeout(focusTimer);
+            scroll.destroy();
+            html.remove();
+            row.emit('destroy');
+        };
+
+        return row;
+    }
+
+    function createTorrentsSkeletonRow() {
+        var row = new Lampa.Emit();
+        var html = Lampa.Template.get('items_line', { title: '⚡️ Торренти (TorrServer)' });
+        var scroll = new Lampa.Scroll({ horizontal: true, step: 320 });
+        var last = null;
+
+        html.addClass('customs-torrents');
+
+        for (var i = 0; i < 4; i++) {
+            var skelHtml = '<div class="customs-torrent-skeleton selector">' +
+                '<div class="customs-torrent-skeleton__title"></div>' +
+                '<div class="customs-torrent-skeleton__badges"></div>' +
+                '<div class="customs-torrent-skeleton__foot">' +
+                    '<div class="customs-torrent-skeleton__meta"></div>' +
+                    '<div class="customs-torrent-skeleton__size"></div>' +
+                '</div>' +
+            '</div>';
+            var el = $(skelHtml);
+            el.on('hover:focus', function () {
+                last = this;
+                scroll.update($(this), true);
+            });
+            scroll.append(el[0]);
+        }
+
+        html.find('.items-line__body').append(scroll.render(true));
+
+        row.create = function () {};
+        row.render = function (js) { return js ? html[0] : html; };
+        row.toggle = function () {
+            Lampa.Controller.add(ROW_TORRENTS, {
+                link: row,
+                toggle: function () {
+                    var focusTarget = (last && $.contains(html[0], last)) ? last : false;
+                    Lampa.Controller.collectionSet(html);
+                    Lampa.Controller.collectionFocus(focusTarget, html);
+                    row.emit('active');
+                    row.emit('toggle');
+                },
+                update: function () {},
+                right: function () { if (Navigator.canmove('right')) Navigator.move('right'); },
+                left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else row.emit('left'); },
+                down: function () { if (Navigator.canmove('down')) Navigator.move('down'); else row.emit('down'); },
+                up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else row.emit('up'); },
+                back: function () { row.emit('back'); }
+            });
+            Lampa.Controller.toggle(ROW_TORRENTS);
+        };
+
+        row.destroy = function () {
+            scroll.destroy();
+            html.remove();
+            row.emit('destroy');
+        };
+
+        return row;
+    }
+
+    function insertTorrentsRow(link, row) {
+        var first = link.items && link.items[0];
+        if (!first || !link.rows) return;
+        if (link.rows.indexOf(ROW_TORRENTS) !== -1) return;
+
+        var startDom = first.render(true);
+        var filmixIdx = link.rows.indexOf(ROW_FILMIX);
+        var insertIndex = 1;
+        var anchorDom = startDom;
+
+        if (filmixIdx !== -1 && link.items[filmixIdx]) {
+            insertIndex = filmixIdx + 1;
+            anchorDom = link.items[filmixIdx].render(true);
+        }
+
+        row.use({
+            onDown: link.emit.bind(link, 'down'),
+            onUp: link.emit.bind(link, 'up'),
+            onBack: link.emit.bind(link, 'back'),
+            onLeft: link.emit.bind(link, 'left'),
+            onActive: function () { link.active = link.items.indexOf(row); },
+            onToggle: function () {
+                var dom = row.render(true);
+                if (dom && link.scroll && link.scroll.update) link.scroll.update(dom);
+            }
+        });
+
+        if (anchorDom && anchorDom.parentNode) {
+            anchorDom.parentNode.insertBefore(row.render(true), anchorDom.nextSibling);
+        }
+
+        link.items.splice(insertIndex, 0, row);
+        link.rows.splice(insertIndex, 0, ROW_TORRENTS);
+        if (link.active >= insertIndex) link.active++;
+
+        if (Lampa.Layer && Lampa.Layer.visible && link.scroll && link.scroll.render) {
+            try {
+                var tDom = link.scroll.render(true);
+                if (tDom) Lampa.Layer.visible(tDom);
+            } catch (e) {}
+        }
+    }
+
     // ---------- Скелетони та вставка рядків на сторінку ----------
 
     function createFilmixSkeletonRow(isSeries) {
@@ -2011,7 +2866,7 @@
         }
     }
 
-    // 2. Трейлери: ЗАВЖДИ ДРУГИМИ (слідом за Filmix)
+    // 3. Трейлери: ЗАВЖДИ СЛІДОМ ЗА ТОРРЕНТАМИ ТА FILMIX
     function insertTrailersRow(link, row) {
         var first = link.items && link.items[0];
         if (!first || !link.rows) return;
@@ -2019,11 +2874,14 @@
 
         var startDom = first.render(true);
         var filmixIdx = link.rows.indexOf(ROW_FILMIX);
+        var torrIdx = link.rows.indexOf(ROW_TORRENTS);
         var insertIndex = 1;
         var anchorDom = startDom;
 
-        // Якщо Filmix вже є на сторінці — вставляємо після Filmix
-        if (filmixIdx !== -1 && link.items[filmixIdx]) {
+        if (torrIdx !== -1 && link.items[torrIdx]) {
+            insertIndex = torrIdx + 1;
+            anchorDom = link.items[torrIdx].render(true);
+        } else if (filmixIdx !== -1 && link.items[filmixIdx]) {
             insertIndex = filmixIdx + 1;
             anchorDom = link.items[filmixIdx].render(true);
         }
@@ -2108,7 +2966,24 @@
             }
         }
 
-        // 2. Трейлери: Вставляємо скелетон ВІДРАЗУ слідом за Filmix
+        // 2. Торренти (TorrServer): Вставляємо скелетон ВІДРАЗУ слідом за Filmix
+        var torrentsSkeleton = null;
+        if (flag('customs_torrents_enabled', true)) {
+            torrentsSkeleton = createTorrentsSkeletonRow();
+            insertTorrentsRow(e.link, torrentsSkeleton);
+
+            searchTorrents(movie, isSeries, function (list) {
+                if (!page || !document.body.contains(page)) return;
+                if (list && list.length) {
+                    var realTorrentsRow = createTorrentsRow(list, movie, isSeries);
+                    swapRow(e.link, torrentsSkeleton, realTorrentsRow, ROW_TORRENTS);
+                } else {
+                    removeRow(e.link, torrentsSkeleton, ROW_TORRENTS);
+                }
+            });
+        }
+
+        // 3. Трейлери: Вставляємо скелетон ВІДРАЗУ слідом за Торрентами
         var trailersSkeleton = null;
         if (flag('customs_trailers_enabled', true)) {
             var langs = enabledLangs();
@@ -2313,7 +3188,41 @@
             '.customs-filmix-split__img.loaded{opacity:1;}',
             '.customs-filmix-item--horizontal.focus .customs-filmix-split__img{transform:scale(1.06);}',
             '.customs-filmix-split-left .customs-filmix-item__ep-badge{position:absolute;bottom:.5em;left:.5em;background:rgba(10,15,25,0.85);border:1px solid rgba(255,255,255,0.25);color:#fff;z-index:2;}',
-            '.customs-filmix-split-right{flex:1;min-width:0;padding:.75em .85em;display:flex;flex-direction:column;justify-content:space-between;}'
+            '.customs-filmix-split-right{flex:1;min-width:0;padding:.75em .85em;display:flex;flex-direction:column;justify-content:space-between;}',
+
+            /* Торренти TorrServer */
+            '.customs-torrents .scroll__body{display:flex;}',
+            '.customs-torrents .scroll__content{padding-top:.5em;padding-bottom:.8em;}',
+            '.customs-torrent-card{position:relative;flex-shrink:0;width:21em;min-height:9.5em;margin-right:1.3em;padding:1em 1.2em;border-radius:1.1em;background:#16191d;border:1px solid rgba(255,255,255,.09);box-shadow:0 8px 24px rgba(0,0,0,.35);display:flex;flex-direction:column;justify-content:space-between;transition:transform .2s ease, border-color .2s ease, background-color .2s ease;}',
+            '.customs-torrent-card.focus{background:#1f252c;border-color:rgba(255,255,255,.45);box-shadow:0 0 0 .25em rgba(255,255,255,.9), 0 12px 30px rgba(0,0,0,.6);transform:scale(1.02);}',
+            '.customs-torrent-card__title{font-size:1.05em;font-weight:600;line-height:1.3;color:#f0f2f5;max-height:2.6em;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}',
+            '.customs-torrent-card__badges{display:flex;align-items:center;flex-wrap:wrap;gap:.4em;margin-top:.6em;}',
+            '.customs-torrent-tag{display:inline-block;padding:.18em .55em;border-radius:.4em;font-size:.78em;font-weight:600;line-height:1.2;letter-spacing:.02em;}',
+            '.customs-torrent-tag--season{background:rgba(255,255,255,.16);color:#fff;}',
+            '.customs-torrent-tag--quality{border:1px solid rgba(255,255,255,.3);color:#e0e4eb;}',
+            '.customs-torrent-tag--codec{background:rgba(255,255,255,.07);color:#9aa3af;}',
+            '.customs-torrent-tag--ukr{background:rgba(245,158,11,.18);color:#fbbf24;border:1px solid rgba(245,158,11,.35);}',
+            '.customs-torrent-card__foot{display:flex;align-items:center;justify-content:space-between;margin-top:.8em;padding-top:.65em;border-top:1px solid rgba(255,255,255,.07);font-size:.82em;}',
+            '.customs-torrent-card__meta{display:flex;align-items:center;gap:.5em;color:#8b949e;}',
+            '.customs-torrent-tracker{text-transform:uppercase;padding:.12em .45em;border-radius:.35em;background:rgba(59,130,246,.15);color:#93c5fd;font-size:.85em;font-weight:700;}',
+            '.customs-torrent-seeds{font-weight:600;color:#c9d1d9;}',
+            '.customs-torrent-card__status{display:flex;align-items:center;gap:.6em;}',
+            '.customs-torrent-size{padding:.2em .65em;border-radius:.4em;background:#ffffff;color:#000000;font-weight:800;font-size:.9em;letter-spacing:-.02em;}',
+            '.customs-torrent-speed{display:inline-flex;align-items:center;gap:.4em;padding:.18em .55em;border-radius:.4em;font-weight:700;font-size:.82em;transition:all .2s ease;}',
+            '.customs-speed-dot{display:inline-block;width:.55em;height:.55em;border-radius:50%;background:currentColor;}',
+            '.customs-speed--idle{background:rgba(255,255,255,.08);color:#8b949e;}',
+            '.customs-speed--testing{background:rgba(59,130,246,.2);color:#60a5fa;}',
+            '.customs-speed--green{background:rgba(16,185,129,.2);color:#34d399;border:1px solid rgba(16,185,129,.4);}',
+            '.customs-speed--yellow{background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.4);}',
+            '.customs-speed--red{background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.35);}',
+            '.customs-torrent-skeleton{flex-shrink:0;width:21em;min-height:9.5em;margin-right:1.3em;padding:1em 1.2em;border-radius:1.1em;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05);display:flex;flex-direction:column;justify-content:space-between;animation:customs-pulse 2.2s ease-in-out infinite;}',
+            '.customs-torrent-skeleton__title{height:1.2em;width:85%;border-radius:.4em;background:rgba(255,255,255,.08);}',
+            '.customs-torrent-skeleton__badges{height:1em;width:50%;border-radius:.3em;background:rgba(255,255,255,.06);margin-top:.6em;}',
+            '.customs-torrent-skeleton__foot{display:flex;justify-content:space-between;align-items:center;margin-top:.8em;}',
+            '.customs-torrent-skeleton__meta{height:1em;width:40%;border-radius:.3em;background:rgba(255,255,255,.06);}',
+            '.customs-torrent-skeleton__size{height:1.2em;width:25%;border-radius:.4em;background:rgba(255,255,255,.08);}',
+
+            '.items-line.customs-strip-hidden{display:none !important;}'
         ].join('\n');
 
         var old = document.getElementById('lampa-customs-style');
@@ -2325,10 +3234,93 @@
         document.head.appendChild(style);
     }
 
+    function applyMainStripsDomFilter() {
+        if (!flag('customs_main_strips_filter_enabled', true)) return;
+        try {
+            var lines = $('.activity.main .items-line');
+            lines.each(function () {
+                var el = $(this);
+                var title = el.find('.items-line__title').text().trim();
+                if (title) {
+                    var sid = getStripId(title);
+                    if (!isStripVisible(sid)) {
+                        el.addClass('customs-strip-hidden');
+                    } else {
+                        el.removeClass('customs-strip-hidden');
+                    }
+                }
+            });
+        } catch (e) {}
+    }
+
+    function initMainStripsHook() {
+        if (!Lampa.Api || !Lampa.Api.main) return;
+        var origApiMain = Lampa.Api.main;
+
+        function processLines(lines) {
+            if (!Array.isArray(lines)) return lines;
+            if (!flag('customs_main_strips_filter_enabled', true)) return lines;
+
+            // 1. Фільтрація прихованих смужок
+            var filtered = lines.filter(function (line) {
+                if (!line) return false;
+                var sid = getStripId(line.title);
+                return isStripVisible(sid);
+            });
+
+            // 2. Сортування смужок за користувацьким порядком
+            var order = getMainStripsOrder();
+            filtered.sort(function (a, b) {
+                var sA = getStripId(a.title);
+                var sB = getStripId(b.title);
+                var idxA = order.indexOf(sA);
+                var idxB = order.indexOf(sB);
+                if (idxA === -1) idxA = 999;
+                if (idxB === -1) idxB = 999;
+                return idxA - idxB;
+            });
+
+            return filtered;
+        }
+
+        Lampa.Api.main = function (params, oncomplite, onerror) {
+            var wrappedOnComplite = function (data) {
+                if (Array.isArray(data)) {
+                    data = processLines(data);
+                }
+                oncomplite(data);
+            };
+
+            var nextFn = origApiMain(params, wrappedOnComplite, onerror);
+
+            if (typeof nextFn === 'function') {
+                return function (resolve, reject) {
+                    nextFn(function (moreData) {
+                        if (Array.isArray(moreData)) {
+                            moreData = processLines(moreData);
+                        }
+                        resolve(moreData);
+                    }, reject);
+                };
+            }
+            return nextFn;
+        };
+
+        // DOM-хук на випадок сторонніх плагінів або закладок
+        Lampa.Listener.follow('activity', function (e) {
+            if (e.type === 'start' && e.object && e.object.component === 'main') {
+                setTimeout(function () {
+                    applyMainStripsDomFilter();
+                }, 400);
+            }
+        });
+    }
+
     function start() {
         addStyle();
         addSettings();
         registerManifestAndName();
+        initMainStripsHook();
         Lampa.Listener.follow('full', onFull);
     }
 
