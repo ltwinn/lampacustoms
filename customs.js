@@ -8,7 +8,8 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.5.0';
+    var PLUGIN_VERSION = '1.5.1';
+    var PLUGIN_BUILD = '11.11 15:10';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     var COMPONENT_NAME = 'lampa_customs';
@@ -214,6 +215,13 @@
             icon: '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
                 '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
                 '</svg>'
+        });
+
+        // Статус версії плагіна
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: { name: 'customs_title_version_status', type: 'title' },
+            field: { name: '⚡️ Версія: v' + PLUGIN_VERSION + ' (' + PLUGIN_BUILD + ')' }
         });
 
         // Розділ: Трейлери
@@ -2676,7 +2684,7 @@
         var html = $('<div class="customs-torrents-screen">' +
             '<div class="customs-ts-head">' +
                 '<div class="customs-ts-head__info">' +
-                    '<div class="customs-ts-head__badge">CUSTOMS TORRENTS</div>' +
+                    '<div class="customs-ts-head__badge">CUSTOMS TORRENTS v' + PLUGIN_VERSION + '</div>' +
                     '<div class="customs-ts-head__title">' + escapeHtml(movie.title || movie.name || '') + '</div>' +
                     '<div class="customs-ts-head__sub">' + escapeHtml(movie.original_title || movie.original_name || '') + (movie.release_date || movie.first_air_date ? ' • ' + (movie.release_date || movie.first_air_date).slice(0, 4) : '') + '</div>' +
                 '</div>' +
@@ -3491,7 +3499,7 @@
             try {
                 var cardRender = (e.object && e.object.activity && e.object.activity.render) ? e.object.activity.render() : $(page);
                 if (cardRender && cardRender.length && !cardRender.find('.view--customs-torrents').length) {
-                    var tBtn = $('<div class="full-start__button selector view--customs-torrents" data-subtitle="TorrServer Speed &amp; Size">' +
+                    var tBtn = $('<div class="full-start__button selector view--customs-torrents" data-subtitle="v' + PLUGIN_VERSION + ' • TorrServer Speed &amp; Size">' +
                         '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
                             '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>' +
                         '</svg>' +
@@ -3955,6 +3963,12 @@
             Lampa.Component.add('customs_torrents_screen', CustomsTorrentsComponent);
         }
         Lampa.Listener.follow('full', onFull);
+
+        try {
+            if (Lampa.Noty && Lampa.Noty.show) {
+                Lampa.Noty.show('⚡️ Lampa Customs v' + PLUGIN_VERSION + ' (' + PLUGIN_BUILD + ')');
+            }
+        } catch (eNoty) {}
     }
 
     if (window.appready) start();
