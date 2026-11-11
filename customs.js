@@ -8,8 +8,8 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.5.9';
-    var PLUGIN_BUILD = '11.11 18:15';
+    var PLUGIN_VERSION = '1.6.0';
+    var PLUGIN_BUILD = '11.11 19:25';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     // Вбудований активатор можливостей TorrServer (аналог etor / cub.rip/plugin/etor)
@@ -2550,14 +2550,14 @@
 
         if (res.status === 'live') {
             targetEl.addClass('customs-seeds--high');
-            targetEl.html('<span class="customs-peer-dot"></span> ● ' + res.livePeers + ' онлайн');
+            targetEl.html('<span class="customs-peer-dot"></span> ' + res.livePeers + ' онлайн');
         } else if (res.status === 'few') {
             targetEl.addClass('customs-seeds--med');
-            var txt = trackerSeeds > res.livePeers ? ('● ' + res.livePeers + ' з ' + trackerSeeds + ' онлайн') : ('● ' + res.livePeers + ' онлайн');
+            var txt = trackerSeeds > res.livePeers ? (res.livePeers + ' з ' + trackerSeeds + ' онлайн') : (res.livePeers + ' онлайн');
             targetEl.html('<span class="customs-peer-dot"></span> ' + txt);
         } else if (res.status === 'dead') {
             targetEl.addClass('customs-seeds--low');
-            targetEl.html('<span class="customs-peer-dot"></span> ● 0 пірів (офлайн)');
+            targetEl.html('<span class="customs-peer-dot"></span> 0 пірів (офлайн)');
         } else if (res.status === 'off') {
             targetEl.addClass('customs-seeds--low');
             targetEl.text('⚠️ TorrServer офлайн');
@@ -2634,64 +2634,204 @@
         Lampa.Player.playlist(playlist);
     }
 
-    function buildCinemaGlassCard(item, idx, movie, isSeries) {
-        var seedClass = 'customs-ts-stat__val customs-ts-stat__val--seeds';
-        if (item.seeds >= 10) seedClass += ' customs-seeds--high';
-        else if (item.seeds >= 3) seedClass += ' customs-seeds--med';
-        else seedClass += ' customs-seeds--low';
+    function getTorrentQualityInfo(item) {
+        var title = (item && item.title) ? item.title.toLowerCase() : '';
+        var q = (item && item.tags && item.tags.quality) ? item.tags.quality : '';
 
-        var card = $('<div class="customs-ts-card selector" data-index="' + idx + '">' +
-            '<div class="customs-ts-card__title">' + escapeHtml(item.title) + '</div>' +
-            '<div class="customs-ts-card__badges"></div>' +
-            '<div class="customs-ts-card__footer">' +
-                '<div class="customs-ts-card__meta-left">' +
-                    (item.tracker ? '<span class="customs-ts-tag customs-ts-tag--tracker">' + escapeHtml(item.tracker) + '</span>' : '') +
-                    (item.date ? '<span class="customs-ts-date">' + escapeHtml(item.date) + '</span>' : '') +
-                '</div>' +
-                '<div class="customs-ts-card__meta-right">' +
-                    '<div class="customs-ts-stat">' +
-                        '<span class="customs-ts-stat__label">Роздають:</span>' +
-                        '<span class="' + seedClass + '">▲ ' + item.seeds + '</span>' +
-                    '</div>' +
-                    '<div class="customs-ts-stat">' +
-                        '<span class="customs-ts-stat__label">Качають:</span>' +
-                        '<span class="customs-ts-stat__val">▼ ' + item.leech + '</span>' +
-                    '</div>' +
-                    '<span class="customs-ts-size">' + item.sizeStr + '</span>' +
-                '</div>' +
-            '</div>' +
-        '</div>');
+        if (q === '4K' || title.indexOf('2160p') !== -1 || title.indexOf('4k') !== -1 || title.indexOf('uhd') !== -1) {
+            return { qClass: 'q-4k', qLabel: '4K UHD' };
+        }
+        if (title.indexOf('1440p') !== -1 || title.indexOf('2k') !== -1) {
+            return { qClass: 'q-1440', qLabel: '1440p 2K' };
+        }
+        if (q === 'FHD' || title.indexOf('1080p') !== -1 || title.indexOf('1080i') !== -1 || title.indexOf('fhd') !== -1) {
+            return { qClass: 'q-1080', qLabel: '1080p FHD' };
+        }
+        if (q === 'HD' || title.indexOf('720p') !== -1 || title.indexOf('hd') !== -1) {
+            return { qClass: 'q-720', qLabel: '720p HD' };
+        }
+        return { qClass: 'q-480', qLabel: 'SD' };
+    }
 
-        card.data('item', item);
-        card.data('magnet', item.magnet);
+    function formatTorrentDisplayTitle(item) {
+        if (!item) return '';
+        var title = item.title || '';
+        var tags = item.tags || {};
 
-        var badgesBox = card.find('.customs-ts-card__badges');
-        if (item.tags.season) {
-            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--season">' + escapeHtml(item.tags.season) + '</span>');
+        if (tags.voice) {
+            if (tags.season) {
+                return tags.season + (tags.episodes ? ' (' + tags.episodes + ')' : '') + ' • ' + tags.voice;
+            }
+            return tags.voice;
         }
-        if (item.tags.episodes) {
-            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--episodes">' + escapeHtml(item.tags.episodes) + '</span>');
-        }
-        if (item.tags.quality) {
-            var qClass = item.tags.quality === '4K' ? 'customs-ts-tag--q-4k' : 'customs-ts-tag--q-fhd';
-            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--quality ' + qClass + '">' + escapeHtml(item.tags.quality) + '</span>');
-        }
-        if (item.tags.voice) {
-            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--voice">🎤 ' + escapeHtml(item.tags.voice) + '</span>');
-        }
-        if (item.tags.codecs && item.tags.codecs.length) {
-            for (var c = 0; c < item.tags.codecs.length; c++) {
-                badgesBox.append('<span class="customs-ts-tag customs-ts-tag--codec">' + escapeHtml(item.tags.codecs[c]) + '</span>');
+
+        if (title.indexOf('/') !== -1) {
+            var parts = title.split('/');
+            for (var p = 0; p < parts.length; p++) {
+                var part = parts[p].trim();
+                if (!part) continue;
+                if (/^(19|20)\d{2}$/.test(part)) continue;
+                if (/^(?:4k|2160p|1080p|1080i|720p|sd|hevc|avc|x264|x265|h\.?264|h\.?265|web-?dl|bdrip|remux|hdr|dv|sdr|dovi)[,\s\/\-]*$/i.test(part)) continue;
+                if (/дб|пм|vo|mvo|dvo|dub|дубл|озвуч|переклад|голос|автор|ст|sub|титры|титри|line|звук|itunes|cinemaukr/i.test(part)) {
+                    return part;
+                }
+            }
+            for (var s = 0; s < parts.length; s++) {
+                var sPart = parts[s].trim();
+                if (/сезон|season|сер|ep/i.test(sPart)) {
+                    return sPart;
+                }
             }
         }
-        if (item.tags.isUkr) {
-            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--ukr">🇺🇦 UKR</span>');
+
+        if (tags.season) {
+            return tags.season + (tags.episodes ? ' (' + tags.episodes + ')' : '');
         }
 
-        if (torrServerPeersCache[item.magnet]) {
-            updateCardLivePeersBadge(card, torrServerPeersCache[item.magnet]);
+        if (title.indexOf('/') !== -1) {
+            return title.split('/')[0].trim();
+        }
+        var clean = title.replace(/\s*[\(\[\{]?(?:19|20)\d{2}.*$/i, '').trim();
+        return clean || title;
+    }
+
+    function buildTorrentTagsHtml(item) {
+        if (!item) return '';
+        var title = (item.title || '').toLowerCase();
+        var tags = item.tags || {};
+        var pills = [];
+
+        if (tags.season) {
+            var sTxt = tags.season + (tags.episodes ? ' • ' + tags.episodes : '');
+            pills.push('<span class="customs-filmix-tag tag--edition">' + escapeHtml(sTxt) + '</span>');
         }
 
+        if (title.indexOf('hevc') !== -1 || title.indexOf('h.265') !== -1 || title.indexOf('x265') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--codec">HEVC</span>');
+        } else if (title.indexOf('avc') !== -1 || title.indexOf('h.264') !== -1 || title.indexOf('x264') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--codec">AVC</span>');
+        } else if (title.indexOf('xvid') !== -1 || title.indexOf('divx') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--codec">XviD</span>');
+        }
+
+        if (title.indexOf('dovi') !== -1 || title.indexOf('dolby vision') !== -1 || /\bdv\b/.test(title)) {
+            pills.push('<span class="customs-filmix-tag tag--dv">DV</span>');
+        }
+        if (title.indexOf('hdr10+') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--hdr">HDR10+</span>');
+        } else if (/\bhdr\b/.test(title)) {
+            pills.push('<span class="customs-filmix-tag tag--hdr">HDR</span>');
+        } else if (pills.length && (title.indexOf('2160') !== -1 || title.indexOf('1080') !== -1 || title.indexOf('4k') !== -1)) {
+            pills.push('<span class="customs-filmix-tag tag--sdr">SDR</span>');
+        }
+
+        if (title.indexOf('remux') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--edition">Remux</span>');
+        } else if (title.indexOf('bdrip') !== -1 || title.indexOf('bluray') !== -1 || title.indexOf('blu-ray') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--edition">BDRip</span>');
+        } else if (title.indexOf('web-dl') !== -1 || title.indexOf('webdl') !== -1 || title.indexOf('web-dlrip') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--edition">WEB-DL</span>');
+        } else if (title.indexOf('hdtv') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--edition">HDTV</span>');
+        }
+
+        if (title.indexOf('atmos') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--audio">ATMOS</span>');
+        } else if (title.indexOf('7.1') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--audio">7.1</span>');
+        } else if (title.indexOf('5.1') !== -1 || title.indexOf('ddp') !== -1 || title.indexOf('ac3') !== -1 || title.indexOf('dts') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--audio">5.1</span>');
+        } else if (title.indexOf('stereo') !== -1 || title.indexOf('2.0') !== -1) {
+            pills.push('<span class="customs-filmix-tag tag--audio">STEREO</span>');
+        }
+
+        if (!pills.length && tags.codecs && tags.codecs.length) {
+            for (var c = 0; c < tags.codecs.length; c++) {
+                pills.push('<span class="customs-filmix-tag tag--codec">' + escapeHtml(tags.codecs[c]) + '</span>');
+            }
+        }
+
+        return pills.join('');
+    }
+
+    function getTorrentSeedsHtml(item) {
+        var cached = torrServerPeersCache[item.magnet];
+        var seedClass = 'customs-torrent-seeds';
+        var text = '';
+        var hasDot = false;
+        if (cached) {
+            hasDot = true;
+            if (cached.status === 'live') {
+                seedClass += ' customs-seeds--high';
+                text = cached.livePeers + ' онлайн';
+            } else if (cached.status === 'few') {
+                seedClass += ' customs-seeds--med';
+                text = (item.seeds > cached.livePeers) ? (cached.livePeers + ' з ' + item.seeds + ' онлайн') : (cached.livePeers + ' онлайн');
+            } else if (cached.status === 'dead') {
+                seedClass += ' customs-seeds--low';
+                text = '0 пірів (офлайн)';
+            } else if (cached.status === 'off') {
+                hasDot = false;
+                seedClass += ' customs-seeds--low';
+                text = '⚠️ TorrServer офлайн';
+            }
+        } else {
+            text = '▲ ' + item.seeds + ' · ▼ ' + item.leech;
+            if (item.seeds >= 10) seedClass += ' customs-seeds--high';
+            else if (item.seeds >= 3) seedClass += ' customs-seeds--med';
+            else seedClass += ' customs-seeds--low';
+        }
+        return {
+            className: seedClass,
+            html: (hasDot ? '<span class="customs-peer-dot"></span> ' : '') + escapeHtml(text)
+        };
+    }
+
+    function buildTorrentCardHtml(item, isFullscreen, idx) {
+        var qInfo = getTorrentQualityInfo(item);
+        var cleanTitle = formatTorrentDisplayTitle(item);
+        var tagsHtml = buildTorrentTagsHtml(item);
+        var seedsObj = getTorrentSeedsHtml(item);
+
+        var langClass = (item.tags && item.tags.isUkr) ? 'badge--ua' : 'badge--ru';
+        var trackerName = item.tracker ? item.tracker.toUpperCase() : 'TORR';
+        var langBadge = (item.tags && item.tags.isUkr) ? ('🇺🇦 ' + trackerName) : trackerName;
+
+        var extraClasses = isFullscreen ? ' customs-ts-card' : '';
+        var idxAttr = (idx !== undefined && idx !== null) ? (' data-index="' + idx + '"') : '';
+
+        return '<div class="customs-filmix-item customs-torrent-card selector' + extraClasses + '"' + idxAttr + ' data-magnet="' + escapeHtml(item.magnet) + '">' +
+            '<div class="customs-filmix-item__header">' +
+                '<div class="customs-filmix-item__voice-box">' +
+                    '<span class="customs-filmix-item__lang ' + langClass + '">' + escapeHtml(langBadge) + '</span>' +
+                    renderVoiceWrapHtml(cleanTitle, item.title) +
+                '</div>' +
+                '<span class="customs-filmix-item__quality ' + qInfo.qClass + '">' + qInfo.qLabel + '</span>' +
+            '</div>' +
+            '<div class="customs-filmix-item__tags">' +
+                tagsHtml +
+            '</div>' +
+            '<div class="customs-filmix-item__divider"></div>' +
+            '<div class="customs-filmix-item__footer">' +
+                '<div class="customs-filmix-item__size-box">' +
+                    '<svg class="customs-filmix-item__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:1.1em;height:1.1em;flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>' +
+                    '<span class="customs-filmix-item__size">' + escapeHtml(item.sizeStr) + '</span>' +
+                '</div>' +
+                '<div class="' + seedsObj.className + '">' +
+                    seedsObj.html +
+                '</div>' +
+                '<div class="customs-filmix-item__action">' +
+                    '<span>Дивитися</span>' +
+                    '<svg class="customs-filmix-item__play-icon" viewBox="0 0 24 24" fill="currentColor" style="width:.9em;height:.9em;flex-shrink:0;"><path d="M8 5v14l11-7z"/></svg>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function buildCinemaGlassCard(item, idx, movie, isSeries) {
+        var card = $(buildTorrentCardHtml(item, true, idx));
+        card.data('item', item);
+        card.data('magnet', item.magnet);
         return card;
     }
 
@@ -2866,10 +3006,13 @@
                 try { $(scroll.body()).empty(); } catch (eB) {}
             }
             for (var s = 0; s < 5; s++) {
-                var skel = $('<div class="customs-ts-card customs-ts-card--skel">' +
-                    '<div class="customs-ts-skel-line customs-ts-skel-title"></div>' +
-                    '<div class="customs-ts-skel-line customs-ts-skel-badges"></div>' +
-                    '<div class="customs-ts-skel-line customs-ts-skel-foot"></div>' +
+                var skel = $('<div class="customs-filmix-skeleton customs-torrent-skeleton selector" style="width:100% !important;margin:0 0 .8em 0 !important;">' +
+                    '<div class="customs-filmix-skeleton__body">' +
+                        '<div class="customs-filmix-skeleton__line customs-filmix-skeleton__line--title"></div>' +
+                        '<div class="customs-filmix-skeleton__line customs-filmix-skeleton__line--tags"></div>' +
+                        '<div class="customs-filmix-item__divider"></div>' +
+                        '<div class="customs-filmix-skeleton__line customs-filmix-skeleton__line--foot"></div>' +
+                    '</div>' +
                 '</div>');
                 scroll.append(skel[0] || skel);
             }
@@ -2952,6 +3095,7 @@
                         lastFocused = this;
                         lastFocusedCard = this;
                         try { scroll.update(this, true); } catch (eUp) {}
+                        checkCardMarquee(this);
 
                         if (focusTimer) clearTimeout(focusTimer);
                         if (torrServerPeersCache[item.magnet]) {
@@ -2967,6 +3111,10 @@
                                 }
                             }, 500);
                         }
+                    });
+
+                    card.on('mouseenter', function () {
+                        checkCardMarquee(this);
                     });
 
                     card.on('hover:enter', function () {
@@ -2986,7 +3134,7 @@
             }
 
             if (!inHeader) {
-                var first = scroll.render().find('.customs-ts-card.selector').eq(0)[0];
+                var first = scroll.render().find('.customs-torrent-card.selector, .customs-ts-card.selector').eq(0)[0];
                 if (first) {
                     lastFocusedCard = first;
                     lastFocused = first;
@@ -3002,9 +3150,6 @@
                 try { _this.activity.loader(false); } catch (eL) {}
             }
             body.append(scroll.render());
-            try {
-                if (scroll.minus) scroll.minus(html.find('.customs-ts-head'));
-            } catch (eM) {}
             setupHeaderControls();
 
             if (allItems && allItems.length) {
@@ -3040,7 +3185,7 @@
                         Lampa.Controller.collectionFocus(targetBtn, html.find('.customs-ts-head__controls'));
                     } else {
                         Lampa.Controller.collectionSet(scroll.render());
-                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var allCards = scroll.render().find('.customs-torrent-card.selector, .customs-ts-card.selector');
                         var target = lastFocusedCard && $.contains(scroll.render()[0], lastFocusedCard) ? lastFocusedCard : allCards[0];
                         if (target) {
                             lastFocusedCard = target;
@@ -3058,7 +3203,7 @@
                             } catch (eH) {}
                         }
                     } else {
-                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var allCards = scroll.render().find('.customs-torrent-card.selector, .customs-ts-card.selector');
                         var currIdx = lastFocusedCard ? allCards.index(lastFocusedCard) : -1;
                         if (currIdx > 0) {
                             var prevCard = allCards.eq(currIdx - 1)[0];
@@ -3080,7 +3225,7 @@
                     if (inHeader) {
                         inHeader = false;
                         Lampa.Controller.collectionSet(scroll.render());
-                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var allCards = scroll.render().find('.customs-torrent-card.selector, .customs-ts-card.selector');
                         var target = lastFocusedCard && $.contains(scroll.render()[0], lastFocusedCard) ? lastFocusedCard : allCards[0];
                         if (target) {
                             lastFocusedCard = target;
@@ -3089,7 +3234,7 @@
                             try { scroll.update(target, true); } catch (eDn) {}
                         }
                     } else {
-                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var allCards = scroll.render().find('.customs-torrent-card.selector, .customs-ts-card.selector');
                         var currIdx = lastFocusedCard ? allCards.index(lastFocusedCard) : -1;
                         if (currIdx >= 0 && currIdx < allCards.length - 1) {
                             var nextCard = allCards.eq(currIdx + 1)[0];
@@ -3151,43 +3296,10 @@
 
         for (var i = 0; i < displayItems.length; i++) {
             (function (item) {
-                var seedClass = 'customs-torrent-seeds';
-                if (item.seeds >= 10) seedClass += ' customs-seeds--high';
-                else if (item.seeds >= 3) seedClass += ' customs-seeds--med';
-                else seedClass += ' customs-seeds--low';
-
-                var card = $('<div class="customs-torrent-card selector">' +
-                    '<div class="customs-torrent-card__title">' + escapeHtml(item.title) + '</div>' +
-                    '<div class="customs-torrent-card__badges"></div>' +
-                    '<div class="customs-torrent-card__foot">' +
-                        '<div class="customs-torrent-card__meta">' +
-                            '<span class="customs-torrent-tracker">' + escapeHtml(item.tracker) + '</span>' +
-                            '<span class="' + seedClass + '">▲ ' + item.seeds + ' · ▼ ' + item.leech + '</span>' +
-                        '</div>' +
-                        '<div class="customs-torrent-card__status">' +
-                            '<span class="customs-torrent-size">' + item.sizeStr + '</span>' +
-                        '</div>' +
-                    '</div>' +
-                '</div>');
+                var card = $(buildTorrentCardHtml(item, false));
 
                 card.data('item', item);
                 card.data('magnet', item.magnet);
-
-                var badgesBox = card.find('.customs-torrent-card__badges');
-                if (item.tags.season) {
-                    badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--season">' + item.tags.season + '</span>');
-                }
-                if (item.tags.quality) {
-                    badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--quality">' + item.tags.quality + '</span>');
-                }
-                if (item.tags.codecs && item.tags.codecs.length) {
-                    for (var c = 0; c < item.tags.codecs.length; c++) {
-                        badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--codec">' + item.tags.codecs[c] + '</span>');
-                    }
-                }
-                if (item.tags.isUkr) {
-                    badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--ukr">🇺🇦 UKR</span>');
-                }
 
                 if (torrServerPeersCache[item.magnet]) {
                     updateCardLivePeersBadge(card, torrServerPeersCache[item.magnet]);
@@ -3196,6 +3308,7 @@
                 card.on('hover:focus', function () {
                     last = this;
                     try { scroll.update(this, true); } catch (eUp) {}
+                    checkCardMarquee(this);
 
                     if (focusTimer) clearTimeout(focusTimer);
                     if (torrServerPeersCache[item.magnet]) {
@@ -3213,6 +3326,10 @@
                     }
                 });
 
+                card.on('mouseenter', function () {
+                    checkCardMarquee(this);
+                });
+
                 card.on('hover:enter', function () {
                     handleTorrentPlayback(item, movie, isSeries);
                 });
@@ -3222,7 +3339,7 @@
         }
 
         if (items.length > 12) {
-            var moreCard = $('<div class="customs-torrent-card customs-torrent-card--more selector">' +
+            var moreCard = $('<div class="customs-filmix-item customs-torrent-card customs-torrent-card--more selector">' +
                 '<div class="customs-torrent-more-body">' +
                     '<div class="customs-torrent-more-icon">📑</div>' +
                     '<div class="customs-torrent-more-title">Всі роздачі</div>' +
@@ -3243,6 +3360,7 @@
         }
 
         html.find('.items-line__body').append(scroll.render(true));
+        setTimeout(function () { checkCardMarquee(html); }, 100);
 
         row.create = function () {};
         row.render = function (js) { return js ? html[0] : html; };
@@ -3284,12 +3402,12 @@
         html.addClass('customs-torrents');
 
         for (var i = 0; i < 4; i++) {
-            var skelHtml = '<div class="customs-torrent-skeleton selector">' +
-                '<div class="customs-torrent-skeleton__title"></div>' +
-                '<div class="customs-torrent-skeleton__badges"></div>' +
-                '<div class="customs-torrent-skeleton__foot">' +
-                    '<div class="customs-torrent-skeleton__meta"></div>' +
-                    '<div class="customs-torrent-skeleton__size"></div>' +
+            var skelHtml = '<div class="customs-filmix-skeleton customs-torrent-skeleton selector">' +
+                '<div class="customs-filmix-skeleton__body">' +
+                    '<div class="customs-filmix-skeleton__line customs-filmix-skeleton__line--title"></div>' +
+                    '<div class="customs-filmix-skeleton__line customs-filmix-skeleton__line--tags"></div>' +
+                    '<div class="customs-filmix-item__divider"></div>' +
+                    '<div class="customs-filmix-skeleton__line customs-filmix-skeleton__line--foot"></div>' +
                 '</div>' +
             '</div>';
             var el = $(skelHtml);
@@ -3984,43 +4102,24 @@
             '.full-start__button.view--customs-torrents svg{width:1.3em;height:1.3em;stroke:currentColor;fill:none;margin-right:.4em;vertical-align:middle;}',
             '.customs-torrents .scroll__body{display:flex;}',
             '.customs-torrents .scroll__content{padding-top:.5em;padding-bottom:.8em;}',
-            '.customs-torrent-card{position:relative;flex-shrink:0;width:21em;min-height:9.5em;margin-right:1.3em;padding:1em 1.2em;border-radius:1.1em;background:#16191d;border:1px solid rgba(255,255,255,.09);box-shadow:0 8px 24px rgba(0,0,0,.35);display:flex;flex-direction:column;justify-content:space-between;transition:transform .2s ease, border-color .2s ease, background-color .2s ease;}',
-            '.customs-torrent-card.focus{background:#1f252c;border-color:rgba(255,255,255,.45);box-shadow:0 0 0 .25em rgba(255,255,255,.9), 0 12px 30px rgba(0,0,0,.6);transform:scale(1.02);}',
-            '.customs-torrent-card__title{font-size:1.05em;font-weight:600;line-height:1.3;color:#f0f2f5;max-height:2.6em;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}',
-            '.customs-torrent-card__badges{display:flex;align-items:center;flex-wrap:wrap;gap:.4em;margin-top:.6em;}',
-            '.customs-torrent-tag{display:inline-block;padding:.18em .55em;border-radius:.4em;font-size:.78em;font-weight:600;line-height:1.2;letter-spacing:.02em;}',
-            '.customs-torrent-tag--season{background:rgba(255,255,255,.16);color:#fff;}',
-            '.customs-torrent-tag--quality{border:1px solid rgba(255,255,255,.3);color:#e0e4eb;}',
-            '.customs-torrent-tag--codec{background:rgba(255,255,255,.07);color:#9aa3af;}',
-            '.customs-torrent-tag--ukr{background:rgba(245,158,11,.18);color:#fbbf24;border:1px solid rgba(245,158,11,.35);}',
-            '.customs-torrent-card__foot{display:flex;align-items:center;justify-content:space-between;margin-top:.8em;padding-top:.65em;border-top:1px solid rgba(255,255,255,.07);font-size:.82em;}',
-            '.customs-torrent-card__meta{display:flex;align-items:center;gap:.5em;color:#8b949e;}',
-            '.customs-torrent-tracker{text-transform:uppercase;padding:.12em .45em;border-radius:.35em;background:rgba(59,130,246,.15);color:#93c5fd;font-size:.85em;font-weight:700;}',
-            '.customs-torrent-seeds{font-weight:700;padding:.15em .5em;border-radius:.35em;background:rgba(255,255,255,.08);color:#c9d1d9;}',
+            '.customs-torrent-card{width:21.5em;margin-right:1.2em;flex-shrink:0;box-sizing:border-box;}',
+            '.customs-torrent-card.focus{z-index:5;}',
+            '.customs-ts-body .customs-torrent-card,.customs-ts-body .customs-ts-card{width:100% !important;margin:0 0 .8em 0 !important;flex-shrink:0 !important;}',
+            '.customs-ts-body .customs-torrent-card.focus,.customs-ts-body .customs-ts-card.focus{transform:scale(1.015) !important;}',
+            '.customs-torrent-seeds{font-weight:700;padding:.15em .55em;border-radius:.4em;background:rgba(255,255,255,.08);color:#c9d1d9;font-size:.82em;white-space:nowrap !important;display:inline-flex !important;align-items:center !important;gap:.35em !important;letter-spacing:.02em;box-sizing:border-box;}',
             '.customs-torrent-seeds.customs-seeds--high{color:#4ade80 !important;background:rgba(74,222,128,.18) !important;border:1px solid rgba(74,222,128,.35) !important;}',
             '.customs-torrent-seeds.customs-seeds--med{color:#fbbf24 !important;background:rgba(251,191,36,.18) !important;border:1px solid rgba(251,191,36,.35) !important;}',
             '.customs-torrent-seeds.customs-seeds--low{color:#f87171 !important;background:rgba(248,113,113,.18) !important;border:1px solid rgba(248,113,113,.35) !important;}',
-            '.customs-torrent-card__status{display:flex;align-items:center;gap:.6em;}',
-            '.customs-torrent-size{padding:.2em .65em;border-radius:.4em;background:#ffffff;color:#000000;font-weight:800;font-size:.9em;letter-spacing:-.02em;}',
-            '.customs-torrent-speed{display:inline-flex;align-items:center;gap:.4em;padding:.18em .55em;border-radius:.4em;font-weight:700;font-size:.82em;transition:all .2s ease;}',
-            '.customs-speed-dot{display:inline-block;width:.55em;height:.55em;border-radius:50%;background:currentColor;}',
-            '.customs-speed--idle{background:rgba(255,255,255,.08);color:#8b949e;}',
-            '.customs-speed--testing{background:rgba(59,130,246,.2);color:#60a5fa;}',
-            '.customs-speed--green{background:rgba(16,185,129,.2);color:#34d399;border:1px solid rgba(16,185,129,.4);}',
-            '.customs-speed--yellow{background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.4);}',
-            '.customs-speed--red{background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.35);}',
-            '.customs-speed--offline{background:rgba(239,68,68,.25);color:#fca5a5;border:1px solid rgba(239,68,68,.5);}',
-            '.customs-torrent-skeleton{flex-shrink:0;width:21em;min-height:9.5em;margin-right:1.3em;padding:1em 1.2em;border-radius:1.1em;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05);display:flex;flex-direction:column;justify-content:space-between;animation:customs-pulse 2.2s ease-in-out infinite;}',
-            '.customs-torrent-skeleton__title{height:1.2em;width:85%;border-radius:.4em;background:rgba(255,255,255,.08);}',
-            '.customs-torrent-skeleton__badges{height:1em;width:50%;border-radius:.3em;background:rgba(255,255,255,.06);margin-top:.6em;}',
-            '.customs-torrent-skeleton__foot{display:flex;justify-content:space-between;align-items:center;margin-top:.8em;}',
-            '.customs-torrent-skeleton__meta{height:1em;width:40%;border-radius:.3em;background:rgba(255,255,255,.06);}',
-            '.customs-torrent-skeleton__size{height:1.2em;width:25%;border-radius:.4em;background:rgba(255,255,255,.08);}',
-            '.customs-torrent-card--more{justify-content:center;align-items:center;text-align:center;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.25);cursor:pointer;}',
-            '.customs-torrent-card--more.focus{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.8);}',
-            '.customs-torrent-more-icon{font-size:2em;margin-bottom:.2em;}',
-            '.customs-torrent-more-title{font-size:1.1em;font-weight:700;color:#fff;}',
-            '.customs-torrent-more-sub{font-size:.85em;color:#8b949e;margin-top:.3em;}',
+            '.customs-peer-dot{display:inline-block;width:.5em;height:.5em;border-radius:50%;background:currentColor;flex-shrink:0;}',
+            '.customs-peer--testing{background:rgba(59,130,246,.18) !important;color:#60a5fa !important;border:1px solid rgba(59,130,246,.35) !important;}',
+            '.customs-peer--testing .customs-peer-dot{animation:customs-live-pulse 1.2s infinite ease-in-out;}',
+            '.customs-torrent-skeleton{width:21.5em;padding:.85em 1em;margin-right:1.2em;box-sizing:border-box;border-radius:1em;flex-shrink:0;}',
+            '.customs-torrent-skeleton .customs-filmix-skeleton__body{padding:0;}',
+            '.customs-torrent-card--more{width:18.5em;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.25);cursor:pointer;min-height:7.2em;}',
+            '.customs-torrent-card--more.focus{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.8);transform:scale(1.04);}',
+            '.customs-torrent-more-icon{font-size:1.8em;margin-bottom:.2em;}',
+            '.customs-torrent-more-title{font-size:1.05em;font-weight:700;color:#fff;}',
+            '.customs-torrent-more-sub{font-size:.8em;color:#8b949e;margin-top:.2em;}',
 
             /* Повноекранний екран Customs Torrents (2-колонковий Cinema Glass) */
             '.customs-torrents-screen{position:absolute !important;top:4.5em !important;left:0 !important;right:0 !important;bottom:0 !important;width:100% !important;height:calc(100vh - 4.5em) !important;background:#0c0f12 !important;color:#f3f4f6 !important;display:flex !important;flex-direction:row !important;font-family:sans-serif !important;z-index:5 !important;box-sizing:border-box !important;overflow:hidden !important;}',
@@ -4051,54 +4150,12 @@
             '.customs-ts-ctrl.active{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#ffffff;font-weight:700;}',
             '.customs-ts-ctrl__label{color:#9ca3af;font-size:.9em;}',
             '.customs-ts-ctrl__val{color:#fff;font-weight:700;}',
-            '.customs-ts-body{flex:1 1 auto !important;position:relative !important;width:100% !important;height:calc(100% - 4.5em) !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
-            '.customs-ts-body .scroll{width:100% !important;height:100% !important;overflow-y:auto !important;overflow-x:hidden !important;display:block !important;}',
+            '.customs-ts-body{flex:1 1 auto !important;position:relative !important;width:100% !important;height:100% !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
+            '.customs-ts-body .scroll{position:absolute !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100% !important;height:100% !important;overflow:hidden !important;display:block !important;}',
             '.customs-ts-body .scroll::-webkit-scrollbar{display:none !important;width:0 !important;}',
             '.customs-ts-body .scroll__content{width:100% !important;padding:1.2em 2.2em 6em !important;box-sizing:border-box !important;}',
             '.customs-ts-body .scroll__body{width:100% !important;display:flex !important;flex-direction:column !important;gap:.8em !important;box-sizing:border-box !important;}',
-            '.customs-ts-card{width:100% !important;box-sizing:border-box !important;flex-shrink:0 !important;margin-bottom:0 !important;background:#181c20;border:1px solid rgba(255,255,255,.08);border-radius:1.1em;padding:1.1em 1.3em;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:transform .18s ease, border-color .18s ease, background-color .18s ease;cursor:pointer;display:flex;flex-direction:column;gap:.6em;}',
-            '.customs-ts-card.focus{background:#20262e;border-color:rgba(255,255,255,.45);box-shadow:0 0 0 .22em rgba(255,255,255,.9), 0 12px 30px rgba(0,0,0,.6);transform:scale(1.015);}',
-            '.customs-ts-card__title{font-size:1.05em;font-weight:600;color:#f3f4f6;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}',
-            '.customs-ts-card__badges{display:flex;align-items:center;flex-wrap:wrap;gap:.45em;}',
-            '.customs-ts-tag{display:inline-block;padding:.2em .6em;border-radius:.4em;font-size:.78em;font-weight:600;line-height:1.2;letter-spacing:.02em;}',
-            '.customs-ts-tag--season{background:rgba(255,255,255,.18);color:#ffffff;font-weight:700;}',
-            '.customs-ts-tag--episodes{background:rgba(0,0,0,.45);color:#9ca3af;border:1px solid rgba(255,255,255,.15);font-weight:600;}',
-            '.customs-ts-tag--quality{border:1px solid rgba(255,255,255,.3);color:#e5e7eb;font-weight:600;}',
-            '.customs-ts-tag--q-4k{background:linear-gradient(135deg, rgba(245,158,11,.3), rgba(217,119,6,.2)) !important;color:#fbbf24 !important;border:1px solid rgba(245,158,11,.5) !important;font-weight:800 !important;}',
-            '.customs-ts-tag--q-fhd{background:linear-gradient(135deg, rgba(59,130,246,.25), rgba(37,99,235,.15)) !important;color:#60a5fa !important;border:1px solid rgba(59,130,246,.4) !important;font-weight:700 !important;}',
-            '.customs-ts-tag--voice{background:rgba(139,92,246,.18);color:#c084fc;border:1px solid rgba(139,92,246,.35);font-weight:600;}',
-            '.customs-ts-tag--codec{background:rgba(255,255,255,.06);color:#9ca3af;}',
-            '.customs-ts-tag--ukr{background:rgba(245,158,11,.18);color:#fbbf24;border:1px solid rgba(245,158,11,.35);font-weight:700;}',
-            '.customs-ts-tag--tracker{text-transform:uppercase;padding:.15em .5em;border-radius:.35em;background:rgba(59,130,246,.15);color:#93c5fd;font-size:.85em;font-weight:700;border:1px solid rgba(59,130,246,.25);}',
-            '.customs-ts-date{color:#6b7280;font-size:.88em;margin-left:.3em;}',
-            '.customs-ts-card__footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.8em;margin-top:.4em;padding-top:.7em;border-top:1px solid rgba(255,255,255,.06);font-size:.84em;}',
-            '.customs-ts-card__meta-left{display:flex;align-items:center;gap:.6em;color:#8b949e;}',
-            '.customs-ts-card__meta-right{display:flex;align-items:center;gap:.9em;margin-left:auto;}',
-            '.customs-ts-stat{display:flex;align-items:center;gap:.35em;color:#8b949e;}',
-            '.customs-ts-stat__val{font-weight:700;padding:.15em .45em;border-radius:.35em;background:rgba(255,255,255,.08);color:#e5e7eb;}',
-            '.customs-ts-stat__val--seeds{color:#ffffff;background:rgba(255,255,255,.14);}',
-            '.customs-ts-stat__val--seeds.customs-seeds--high{color:#4ade80 !important;background:rgba(74,222,128,.18) !important;border:1px solid rgba(74,222,128,.35) !important;}',
-            '.customs-ts-stat__val--seeds.customs-seeds--med{color:#fbbf24 !important;background:rgba(251,191,36,.18) !important;border:1px solid rgba(251,191,36,.35) !important;}',
-            '.customs-ts-stat__val--seeds.customs-seeds--low{color:#f87171 !important;background:rgba(248,113,113,.18) !important;border:1px solid rgba(248,113,113,.35) !important;}',
-            '.customs-live-peers-badge{display:inline-flex;align-items:center;gap:.35em;padding:.2em .6em;border-radius:.4em;font-size:.82em;font-weight:700;letter-spacing:.01em;transition:all .18s ease;white-space:nowrap;}',
-            '.customs-peer-dot{display:inline-block;width:.5em;height:.5em;border-radius:50%;background:currentColor;}',
-            '.customs-peer--testing{background:rgba(59,130,246,.18) !important;color:#60a5fa !important;border:1px solid rgba(59,130,246,.35) !important;}',
-            '.customs-peer--testing .customs-peer-dot{animation:customs-live-pulse 1.2s infinite ease-in-out;}',
-            '.customs-peer--live{background:rgba(74,222,128,.18) !important;color:#4ade80 !important;border:1px solid rgba(74,222,128,.35) !important;}',
-            '.customs-peer--live .customs-peer-dot{animation:customs-live-pulse 2s infinite ease-in-out;}',
-            '.customs-peer--few{background:rgba(251,191,36,.18) !important;color:#fbbf24 !important;border:1px solid rgba(251,191,36,.35) !important;}',
-            '.customs-peer--dead{background:rgba(248,113,113,.18) !important;color:#f87171 !important;border:1px solid rgba(248,113,113,.35) !important;}',
-            '.customs-peer--off{background:rgba(248,113,113,.22) !important;color:#fca5a5 !important;border:1px solid rgba(248,113,113,.45) !important;}',
-            '.customs-ts-size{padding:.25em .7em;border-radius:.4em;background:#ffffff;color:#000000;font-weight:800;font-size:.92em;letter-spacing:-.02em;box-shadow:0 2px 6px rgba(0,0,0,.4);white-space:nowrap;}',
-            '.customs-speed-badge{display:inline-flex;align-items:center;gap:.4em;padding:.22em .65em;border-radius:.45em;font-weight:700;font-size:.82em;border:1px solid transparent;transition:all .18s ease;white-space:nowrap;cursor:pointer;}',
-            '.customs-subbadge{font-size:.82em;font-weight:500;opacity:.9;padding:.1em .35em;border-radius:.3em;background:rgba(0,0,0,.25);margin-left:.2em;}',
             '@keyframes customs-live-pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(1.2);}}',
-            '.customs-speed--green .customs-speed-dot{animation:customs-live-pulse 1.8s infinite ease-in-out;}',
-            '.customs-ts-card--skel{min-height:7em;background:rgba(255,255,255,.03);animation:customs-pulse 2.2s infinite ease-in-out;}',
-            '.customs-ts-skel-line{border-radius:.35em;background:rgba(255,255,255,.06);}',
-            '.customs-ts-skel-title{height:1.2em;width:75%;}',
-            '.customs-ts-skel-badges{height:1em;width:40%;margin-top:.5em;}',
-            '.customs-ts-skel-foot{height:1.1em;width:60%;margin-top:.8em;}',
             '.customs-ts-empty{padding:4em 2em;text-align:center;color:#9ca3af;}',
             '.customs-ts-empty__icon{font-size:3em;margin-bottom:.4em;}',
             '.customs-ts-empty__title{font-size:1.3em;font-weight:700;color:#fff;}',
