@@ -2176,7 +2176,7 @@
             return b.sizeBytes - a.sizeBytes;
         });
 
-        return result.slice(0, 15);
+        return result.slice(0, 50);
     }
 
     function fallbackDirectParserSearch(query, movie, isSeries, callback) {
@@ -2441,6 +2441,39 @@
         Lampa.Player.playlist(playlist);
     }
 
+    function openAllTorrentsModal(movie, isSeries, allItems) {
+        if (!allItems || !allItems.length) {
+            Lampa.Noty.show('Роздач не знайдено');
+            return;
+        }
+
+        var selectItems = allItems.map(function (it, idx) {
+            var speedStr = '';
+            if (torrServerSpeedCache[it.magnet]) {
+                var sp = torrServerSpeedCache[it.magnet];
+                var mbps = (sp.speed / (1024 * 1024)).toFixed(1);
+                speedStr = ' • ⚡️ ' + mbps + ' MB/s (' + (sp.status === 'green' ? '✓' : (sp.status === 'yellow' ? '⚠️' : '✕')) + ')';
+            }
+
+            return {
+                title: (it.tags.isUkr ? '🇺🇦 ' : '') + it.title,
+                subtitle: it.sizeStr + ' • S: ' + it.seeds + ' / L: ' + it.leech + ' • ' + it.tracker + speedStr,
+                torrent: it
+            };
+        });
+
+        Lampa.Select.show({
+            title: 'Всі роздачі (' + allItems.length + ') — ' + (movie.title || movie.name || ''),
+            items: selectItems,
+            onSelect: function (sel) {
+                handleTorrentPlayback(sel.torrent, movie, isSeries);
+            },
+            onBack: function () {
+                Lampa.Controller.toggle(ROW_TORRENTS);
+            }
+        });
+    }
+
     function createTorrentsRow(items, movie, isSeries) {
         var row = new Lampa.Emit();
         var html = Lampa.Template.get('items_line', { title: '⚡️ Торренти (TorrServer)' });
@@ -2450,14 +2483,16 @@
 
         html.addClass('customs-torrents');
 
-        for (var i = 0; i < items.length; i++) {
+        var displayItems = items.slice(0, 12);
+
+        for (var i = 0; i < displayItems.length; i++) {
             (function (item) {
                 var card = $('<div class="customs-torrent-card selector">' +
-                    '<div class="customs-torrent-card__title">' + Lampa.Utils.escapeHtml(item.title) + '</div>' +
+                    '<div class="customs-torrent-card__title">' + escapeHtml(item.title) + '</div>' +
                     '<div class="customs-torrent-card__badges"></div>' +
                     '<div class="customs-torrent-card__foot">' +
                         '<div class="customs-torrent-card__meta">' +
-                            '<span class="customs-torrent-tracker">' + Lampa.Utils.escapeHtml(item.tracker) + '</span>' +
+                            '<span class="customs-torrent-tracker">' + escapeHtml(item.tracker) + '</span>' +
                             '<span class="customs-torrent-seeds">S: ' + item.seeds + ' / L: ' + item.leech + '</span>' +
                         '</div>' +
                         '<div class="customs-torrent-card__status">' +
@@ -2516,7 +2551,28 @@
                 });
 
                 scroll.append(card[0]);
-            })(items[i]);
+            })(displayItems[i]);
+        }
+
+        if (items.length > 12) {
+            var moreCard = $('<div class="customs-torrent-card customs-torrent-card--more selector">' +
+                '<div class="customs-torrent-more-body">' +
+                    '<div class="customs-torrent-more-icon">📑</div>' +
+                    '<div class="customs-torrent-more-title">Всі роздачі</div>' +
+                    '<div class="customs-torrent-more-sub">Показати всі ' + items.length + ' роздач</div>' +
+                '</div>' +
+            '</div>');
+
+            moreCard.on('hover:focus', function () {
+                last = this;
+                scroll.update($(this), true);
+            });
+
+            moreCard.on('hover:enter', function () {
+                openAllTorrentsModal(movie, isSeries, items);
+            });
+
+            scroll.append(moreCard[0]);
         }
 
         html.find('.items-line__body').append(scroll.render(true));
@@ -3017,6 +3073,18 @@
                 if (list && list.length) {
                     var realTorrentsRow = createTorrentsRow(list, movie, isSeries);
                     swapRow(e.link, torrentsSkeleton, realTorrentsRow, ROW_TORRENTS);
+
+                    try {
+                        var cardRender = (e.object && e.object.activity && e.object.activity.render) ? e.object.activity.render() : $(page);
+                        var btnBox = cardRender.find('.full-start-new__buttons, .full-start__buttons');
+                        if (btnBox.length && !btnBox.find('.view--customs-torrents').length) {
+                            var tBtn = $('<div class="full-start__button selector view--customs-torrents"><span>⚡️ Торренти</span></div>');
+                            tBtn.on('hover:enter', function () {
+                                openAllTorrentsModal(movie, isSeries, list);
+                            });
+                            btnBox.append(tBtn);
+                        }
+                    } catch (err) {}
                 } else {
                     removeRow(e.link, torrentsSkeleton, ROW_TORRENTS);
                 }
@@ -3261,6 +3329,12 @@
             '.customs-torrent-skeleton__foot{display:flex;justify-content:space-between;align-items:center;margin-top:.8em;}',
             '.customs-torrent-skeleton__meta{height:1em;width:40%;border-radius:.3em;background:rgba(255,255,255,.06);}',
             '.customs-torrent-skeleton__size{height:1.2em;width:25%;border-radius:.4em;background:rgba(255,255,255,.08);}',
+
+            '.customs-torrent-card--more{justify-content:center;align-items:center;text-align:center;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.25);cursor:pointer;}',
+            '.customs-torrent-card--more.focus{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.8);}',
+            '.customs-torrent-more-icon{font-size:2em;margin-bottom:.2em;}',
+            '.customs-torrent-more-title{font-size:1.1em;font-weight:700;color:#fff;}',
+            '.customs-torrent-more-sub{font-size:.85em;color:#8b949e;margin-top:.3em;}',
 
             '.items-line.customs-strip-hidden{display:none !important;}'
         ].join('\n');
