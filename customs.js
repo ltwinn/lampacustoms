@@ -8,9 +8,18 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.5.3';
-    var PLUGIN_BUILD = '11.11 15:45';
+    var PLUGIN_VERSION = '1.5.5';
+    var PLUGIN_BUILD = '11.11 16:40';
     window.lampa_customs_plugin = PLUGIN_VERSION;
+
+    // Вбудований активатор можливостей TorrServer (аналог etor / cub.rip/plugin/etor)
+    // Знімає обмеження «demo mode» на Smart TV (LG webOS, Samsung Tizen) та активує нативні торренти Lampa
+    try {
+        if (!window.lampa_settings) window.lampa_settings = {};
+        window.lampa_settings.torrents_use = true;
+        window.lampa_settings.demo = false;
+        window.lampa_settings.read_only = false;
+    } catch (eSettings) {}
 
     var COMPONENT_NAME = 'lampa_customs';
     var ROW_TRAILERS = 'customs_trailers';
@@ -2165,11 +2174,25 @@
         return (title + '').replace(/[^\w\s\u0400-\u04FF\.\-]/g, '').trim().replace(/\s+/g, '.');
     }
 
+    var MONTHS_UA = ['Січня', 'Лютого', 'Березня', 'Квітня', 'Травня', 'Червня', 'Липня', 'Серпня', 'Вересня', 'Жовтня', 'Листопада', 'Грудня'];
+    function formatTorrentDate(raw) {
+        if (!raw) return '';
+        try {
+            var d = new Date(raw);
+            if (!isNaN(d.getTime())) {
+                return d.getDate() + ' ' + MONTHS_UA[d.getMonth()] + ' ' + d.getFullYear();
+            }
+        } catch (e) {}
+        return (raw + '').slice(0, 10);
+    }
+
     function extractTorrentTags(title) {
         var str = (title || '').toLowerCase();
         var tags = {
             season: '',
+            episodes: '',
             quality: '',
+            voice: '',
             codecs: [],
             isUkr: false
         };
@@ -2178,7 +2201,7 @@
             tags.isUkr = true;
         }
 
-        var sMatch = title.match(/s(\d{1,2})-(\d{1,2})/i) || title.match(/сезон\s*(\d{1,2})-(\d{1,2})/i);
+        var sMatch = title.match(/s(\d{1,2})-(\d{1,2})/i) || title.match(/сезон[и]?\s*(\d{1,2})-(\d{1,2})/i);
         if (sMatch) {
             tags.season = 'S' + parseInt(sMatch[1], 10) + '-' + parseInt(sMatch[2], 10);
         } else {
@@ -2188,12 +2211,27 @@
             }
         }
 
+        var epMatch = title.match(/(?:серии|серії|episodes|ep)\s*(\d{1,2})-(\d{1,2})/i) || title.match(/(\d{1,2})-(\d{1,2})\s*(?:сер|ep)/i);
+        if (epMatch) {
+            tags.episodes = epMatch[1] + '-' + epMatch[2];
+        } else {
+            var epOf = title.match(/(\d{1,2})\s*(?:из|з)\s*(\d{1,2})/i);
+            if (epOf) {
+                tags.episodes = '1-' + epOf[1];
+            }
+        }
+
+        var voiceMatch = title.match(/(?:\[|\(|\s)(AlexFilm|LostFilm|HDRezka|Кубик в кубе|Цікава Ідея|DniproFilm|BaibaKo|NewStudio|Jaskier|TVShows|UaTeam|В одне рило|НеЗупиняйПродакшн|Студія Омікрон|HD-Rezka|LineStar|ColdFilm|Octopus)(?:\]|\)|\s|$)/i);
+        if (voiceMatch) {
+            tags.voice = voiceMatch[1];
+        }
+
         if (str.indexOf('2160p') !== -1 || str.indexOf('4k') !== -1 || str.indexOf('uhd') !== -1) {
-            tags.quality = '4K UHD';
+            tags.quality = '4K';
         } else if (str.indexOf('1080p') !== -1 || str.indexOf('1080i') !== -1 || str.indexOf('fhd') !== -1) {
-            tags.quality = 'FHD 1080p';
-        } else if (str.indexOf('720p') !== -1) {
-            tags.quality = 'HD 720p';
+            tags.quality = 'FHD';
+        } else if (str.indexOf('720p') !== -1 || str.indexOf('hd') !== -1) {
+            tags.quality = 'HD';
         } else {
             tags.quality = 'SD';
         }
@@ -2269,6 +2307,8 @@
             if (!tracker) tracker = 'torrent';
 
             var tags = extractTorrentTags(rawTitle);
+            var rawDate = it.PublishDate || it.PubDate || it.pubdate || it.date || '';
+            var dateStr = formatTorrentDate(rawDate);
 
             result.push({
                 title: rawTitle,
@@ -2278,6 +2318,7 @@
                 seeds: seeds,
                 leech: leech,
                 tracker: tracker,
+                date: dateStr,
                 tags: tags
             });
         }
@@ -2578,73 +2619,42 @@
     }
 
     function handleTorrentPlayback(item, movie, isSeries) {
-        var torrUrl = getTorrServerUrl();
         if (!item || !item.magnet) {
             Lampa.Noty.show('Не вдалося отримати посилання на торент');
             return;
         }
 
-        if (!isSeries) {
-            var playUrl = torrUrl + '/stream/' + encodeURIComponent(cleanFileName(item.title) + '.mkv') + '?link=' + encodeURIComponent(item.magnet) + '&play';
-            Lampa.Player.play({
-                title: item.title,
-                url: playUrl
-            });
-            Lampa.Player.playlist([{
-                title: item.title,
-                url: playUrl
-            }]);
-        } else {
-            Lampa.Loading.start(function () {});
-            var statUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&stat';
-            var net = new Lampa.Reguest();
-            net.timeout(7000);
+        var posterUrl = (movie && movie.img) || (movie && movie.poster_path ? ('https://image.tmdb.org/t/p/w500' + movie.poster_path) : '');
 
-            sendTorrReq(net, statUrl, function (data) {
-                Lampa.Loading.stop();
-                var files = (data && data.file_stats) || [];
-                var videoFiles = files.filter(function (f) {
-                    return f && f.path && /\.(mkv|mp4|avi|ts|m2ts|mov)$/i.test(f.path);
-                });
+        var torrentElement = {
+            title: item.title,
+            MagnetUri: item.magnet,
+            Link: item.magnet,
+            size: item.sizeBytes || 0,
+            tracker: item.tracker || 'customs',
+            poster: posterUrl
+        };
 
-                videoFiles.sort(function (a, b) {
-                    return a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' });
-                });
-
-                if (videoFiles.length > 1) {
-                    var selectItems = videoFiles.map(function (f, idx) {
-                        return {
-                            title: cleanEpisodeTitle(f.path, idx + 1),
-                            subtitle: formatBytes(f.length),
-                            file: f,
-                            index: f.id
-                        };
-                    });
-
-                    Lampa.Select.show({
-                        title: 'Виберіть серію',
-                        items: selectItems,
-                        onSelect: function (sel) {
-                            playSeriesTorrentFile(item, sel.file, videoFiles, torrUrl);
-                        },
-                        onBack: function () {
-                            if (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active().component === 'customs_torrents_screen') {
-                                Lampa.Controller.toggle('customs_torrents_screen');
-                            } else {
-                                Lampa.Controller.toggle(ROW_TORRENTS);
-                            }
-                        }
-                    });
-                } else if (videoFiles.length === 1) {
-                    playSeriesTorrentFile(item, videoFiles[0], videoFiles, torrUrl);
-                } else {
-                    playSeriesTorrentFile(item, { id: 0, path: item.title + '.mkv' }, [], torrUrl);
-                }
-            }, function () {
-                Lampa.Loading.stop();
-                playSeriesTorrentFile(item, { id: 0, path: item.title + '.mkv' }, [], torrUrl);
-            });
+        // Пріоритет: Нативний Torrent.start Lampa (нативно відкриває вікно "Файли", групує сезони по папках, завантажує прев'ю серій та трекає перегляд)
+        if (Lampa.Torrent && Lampa.Torrent.start) {
+            try {
+                Lampa.Torrent.start(torrentElement, movie);
+                return;
+            } catch (eTs) {
+                console.error('Lampa.Torrent.start error', eTs);
+            }
         }
+
+        var torrUrl = getTorrServerUrl();
+        var playUrl = torrUrl + '/stream/' + encodeURIComponent(cleanFileName(item.title) + '.mkv') + '?link=' + encodeURIComponent(item.magnet) + '&play';
+        Lampa.Player.play({
+            title: item.title,
+            url: playUrl
+        });
+        Lampa.Player.playlist([{
+            title: item.title,
+            url: playUrl
+        }]);
     }
 
     function playSeriesTorrentFile(item, file, allFiles, torrUrl) {
@@ -2684,7 +2694,7 @@
             '<div class="customs-ts-card__badges"></div>' +
             '<div class="customs-ts-card__footer">' +
                 '<div class="customs-ts-card__meta-left">' +
-                    '<span class="customs-ts-tag customs-ts-tag--tracker">' + escapeHtml(item.tracker) + '</span>' +
+                    (item.tracker ? '<span class="customs-ts-tag customs-ts-tag--tracker">' + escapeHtml(item.tracker) + '</span>' : '') +
                     (item.date ? '<span class="customs-ts-date">' + escapeHtml(item.date) + '</span>' : '') +
                 '</div>' +
                 '<div class="customs-ts-card__meta-right">' +
@@ -2698,19 +2708,29 @@
                     '</div>' +
                     '<div class="customs-speed-badge customs-speed--idle">' +
                         '<span class="customs-speed-dot"></span>' +
-                        '<span class="customs-speed-text">⚡️ Перевірити</span>' +
+                        '<span class="customs-speed-text">⚡️ В черзі...</span>' +
                     '</div>' +
                     '<span class="customs-ts-size">' + item.sizeStr + '</span>' +
                 '</div>' +
             '</div>' +
         '</div>');
 
+        card.data('item', item);
+        card.data('magnet', item.magnet);
+
         var badgesBox = card.find('.customs-ts-card__badges');
         if (item.tags.season) {
             badgesBox.append('<span class="customs-ts-tag customs-ts-tag--season">' + escapeHtml(item.tags.season) + '</span>');
         }
+        if (item.tags.episodes) {
+            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--episodes">' + escapeHtml(item.tags.episodes) + '</span>');
+        }
         if (item.tags.quality) {
-            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--quality">' + escapeHtml(item.tags.quality) + '</span>');
+            var qClass = item.tags.quality === '4K' ? 'customs-ts-tag--q-4k' : 'customs-ts-tag--q-fhd';
+            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--quality ' + qClass + '">' + escapeHtml(item.tags.quality) + '</span>');
+        }
+        if (item.tags.voice) {
+            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--voice">🎤 ' + escapeHtml(item.tags.voice) + '</span>');
         }
         if (item.tags.codecs && item.tags.codecs.length) {
             for (var c = 0; c < item.tags.codecs.length; c++) {
@@ -2790,25 +2810,62 @@
         var isSeries = Boolean(object.isSeries);
         var scroll = new Lampa.Scroll({ over: true, mask: true, step: 250 });
 
+        var poster = (movie && movie.poster_path) ? ('https://image.tmdb.org/t/p/w500' + movie.poster_path) : (movie && movie.img ? movie.img : '');
+        var year = (movie && (movie.release_date || movie.first_air_date)) ? (movie.release_date || movie.first_air_date).slice(0, 4) : '';
+        var country = '';
+        if (movie && movie.production_countries && movie.production_countries.length) {
+            country = movie.production_countries[0].name || movie.production_countries[0].iso_3166_1 || '';
+        } else if (movie && movie.origin_country && movie.origin_country.length) {
+            country = movie.origin_country[0];
+        }
+        var vote = (movie && typeof movie.vote_average !== 'undefined' && movie.vote_average > 0) ? Number(movie.vote_average).toFixed(1) : '';
+        var age = (movie && (movie.age_limit || movie.pg)) ? (movie.age_limit || movie.pg) : (movie && movie.adult ? '18+' : '12+');
+        var movieTitle = (movie && (movie.title || movie.name)) || '';
+        var genresStr = '';
+        if (movie && movie.genres && movie.genres.length) {
+            var gNames = [];
+            for (var gi = 0; gi < movie.genres.length && gi < 3; gi++) {
+                gNames.push(movie.genres[gi].name || movie.genres[gi]);
+            }
+            genresStr = gNames.join(', ');
+        }
+        var descrStr = (movie && (movie.overview || movie.descr || movie.description)) || '';
+
         var html = $('<div class="customs-torrents-screen">' +
-            '<div class="customs-ts-head">' +
-                '<div class="customs-ts-head__info">' +
-                    '<div class="customs-ts-head__badge">CUSTOMS TORRENTS v' + PLUGIN_VERSION + '</div>' +
-                    '<div class="customs-ts-head__title">' + escapeHtml(movie.title || movie.name || '') + '</div>' +
-                    '<div class="customs-ts-head__sub">' + escapeHtml(movie.original_title || movie.original_name || '') + (movie.release_date || movie.first_air_date ? ' • ' + (movie.release_date || movie.first_air_date).slice(0, 4) : '') + '</div>' +
+            '<div class="customs-ts-sidebar">' +
+                (poster ? '<div class="customs-ts-poster-wrap"><img class="customs-ts-poster" src="' + escapeHtml(poster) + '" /></div>' : '') +
+                '<div class="customs-ts-meta-line">' +
+                    (year ? '<span class="customs-ts-year">' + escapeHtml(year) + '</span>' : '') +
+                    (year && country ? '<span class="customs-ts-meta-sep">•</span>' : '') +
+                    (country ? '<span class="customs-ts-country">' + escapeHtml(country) + '</span>' : '') +
                 '</div>' +
-                '<div class="customs-ts-head__controls">' +
-                    '<div class="customs-ts-ctrl selector customs-ts-sort" data-action="sort">' +
-                        '<span class="customs-ts-ctrl__label">Сортування:</span> ' +
-                        '<span class="customs-ts-sort-val">По розміру <span class="customs-sort-arrow">⬇️</span></span>' +
-                    '</div>' +
-                    '<div class="customs-ts-ctrl selector customs-ts-filter active" data-filter="all">Всі</div>' +
-                    '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="4k">4K UHD</div>' +
-                    '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="1080p">1080p FHD</div>' +
-                    '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="ukr">🇺🇦 Тільки UKR</div>' +
+                '<div class="customs-ts-rate-line">' +
+                    (vote ? '<span class="customs-ts-rate">★ ' + escapeHtml(vote) + '</span>' : '') +
+                    (age ? '<span class="customs-ts-age">' + escapeHtml(age) + '</span>' : '') +
                 '</div>' +
+                '<div class="customs-ts-title">' + escapeHtml(movieTitle) + '</div>' +
+                (genresStr ? '<div class="customs-ts-genres">' + escapeHtml(genresStr) + '</div>' : '') +
+                (descrStr ? '<div class="customs-ts-descr">' + escapeHtml(descrStr) + '</div>' : '') +
             '</div>' +
-            '<div class="customs-ts-body"></div>' +
+            '<div class="customs-ts-main">' +
+                '<div class="customs-ts-head">' +
+                    '<div class="customs-ts-head__controls">' +
+                        '<div class="customs-ts-ctrl selector customs-ts-sort" data-action="sort">' +
+                            '<span class="customs-ts-ctrl__label">Сортування:</span> ' +
+                            '<span class="customs-ts-sort-val">По розміру <span class="customs-sort-arrow">⬇️</span></span>' +
+                        '</div>' +
+                        '<div class="customs-ts-ctrl selector customs-ts-filter active" data-filter="all">Всі</div>' +
+                        '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="4k">4K</div>' +
+                        '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="1080p">1080p</div>' +
+                        '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="ukr">🇺🇦 Тільки UKR</div>' +
+                    '</div>' +
+                    '<div class="customs-ts-autotest-status">' +
+                        '<span class="customs-ts-autotest-icon">⚡️</span>' +
+                        '<span class="customs-ts-autotest-val">Очікування...</span>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="customs-ts-body"></div>' +
+            '</div>' +
         '</div>');
 
         var body = html.find('.customs-ts-body');
@@ -2818,8 +2875,109 @@
         var lastFocused = null;
         var lastFocusedCard = null;
         var focusTimer = null;
+        var autoTestTimer = null;
+        var isAutoTesting = false;
+        var isDestroyed = false;
+        var autoTestQueue = [];
+        var autoTestIdx = 0;
         var inHeader = false;
         var activeProbe = null;
+
+        function findCardByMagnet(magnet) {
+            if (!magnet) return $();
+            return scroll.render().find('.customs-ts-card').filter(function () {
+                return $(this).data('magnet') === magnet;
+            });
+        }
+
+        function updateAutoTestStatus(testedCount, totalCount, currentName) {
+            var statusVal = html.find('.customs-ts-autotest-val');
+            if (!statusVal.length) return;
+            if (totalCount === 0) {
+                statusVal.text('Немає 4K/FHD');
+            } else if (testedCount >= totalCount) {
+                statusVal.html('<span style="color:#4ade80;">✓ 4K/FHD перевірено (' + totalCount + ')</span>');
+            } else if (currentName) {
+                statusVal.html('<span class="customs-autotest-pulse">Тест ' + (testedCount + 1) + '/' + totalCount + ': ' + escapeHtml(currentName) + '</span>');
+            } else {
+                statusVal.text(testedCount + ' / ' + totalCount + ' перевірено');
+            }
+        }
+
+        function startAutoTestQueue(itemsToTest) {
+            if (autoTestTimer) clearTimeout(autoTestTimer);
+            if (activeProbe && activeProbe.abort) activeProbe.abort();
+
+            autoTestQueue = [];
+            for (var i = 0; i < itemsToTest.length; i++) {
+                var it = itemsToTest[i];
+                var q = (it.tags && it.tags.quality) || '';
+                var t = it.title || '';
+                if (q === '4K' || q === 'FHD' || /4k|2160|1080|fhd/i.test(t)) {
+                    autoTestQueue.push(it);
+                }
+            }
+
+            autoTestIdx = 0;
+            isAutoTesting = true;
+
+            var testedCount = 0;
+            for (var k = 0; k < autoTestQueue.length; k++) {
+                if (torrServerSpeedCache[autoTestQueue[k].magnet]) {
+                    testedCount++;
+                }
+            }
+            updateAutoTestStatus(testedCount, autoTestQueue.length);
+
+            stepAutoTest();
+        }
+
+        function stepAutoTest() {
+            if (isDestroyed || !isAutoTesting) return;
+            if (autoTestIdx >= autoTestQueue.length) {
+                isAutoTesting = false;
+                updateAutoTestStatus(autoTestQueue.length, autoTestQueue.length);
+                return;
+            }
+
+            var currentItem = autoTestQueue[autoTestIdx];
+
+            if (torrServerSpeedCache[currentItem.magnet]) {
+                var card = findCardByMagnet(currentItem.magnet);
+                if (card.length) {
+                    updateGlassCardSpeedBadge(card, torrServerSpeedCache[currentItem.magnet]);
+                }
+                autoTestIdx++;
+                stepAutoTest();
+                return;
+            }
+
+            var cardEl = findCardByMagnet(currentItem.magnet);
+            if (cardEl.length) {
+                setGlassCardTesting(cardEl);
+            }
+
+            var shortTitle = (currentItem.tags && currentItem.tags.quality ? currentItem.tags.quality : '') + ' ' + (currentItem.sizeStr || '');
+            updateAutoTestStatus(autoTestIdx, autoTestQueue.length, shortTitle);
+
+            activeProbe = probeTorrServerSpeed(currentItem, movie, isSeries, function (res) {
+                if (isDestroyed) return;
+                if (res && res.speed > 0) {
+                    torrServerSpeedCache[currentItem.magnet] = res;
+                }
+                var targetCard = findCardByMagnet(currentItem.magnet);
+                if (targetCard.length) {
+                    updateGlassCardSpeedBadge(targetCard, res);
+                }
+
+                autoTestIdx++;
+                updateAutoTestStatus(autoTestIdx, autoTestQueue.length);
+
+                autoTestTimer = setTimeout(function () {
+                    stepAutoTest();
+                }, 250);
+            });
+        }
 
         function renderSkeletons() {
             if (_this.activity && _this.activity.loader) {
@@ -2925,13 +3083,19 @@
                                 setGlassCardTesting(card);
                                 if (activeProbe && activeProbe.abort) activeProbe.abort();
                                 activeProbe = probeTorrServerSpeed(item, movie, isSeries, function (res) {
+                                    if (isDestroyed) return;
                                     if (res && res.speed > 0) {
                                         torrServerSpeedCache[item.magnet] = res;
                                     }
                                     updateGlassCardSpeedBadge(card, res);
+                                    if (isAutoTesting) {
+                                        autoTestTimer = setTimeout(function () {
+                                            stepAutoTest();
+                                        }, 300);
+                                    }
                                 });
                             }
-                        }, 500);
+                        }, 400);
                     });
 
                     card.on('hover:enter', function () {
@@ -2941,6 +3105,8 @@
                     scroll.append(card[0] || card);
                 })(list[i], i);
             }
+
+            startAutoTestQueue(list);
 
             if (Lampa.Layer && Lampa.Layer.visible) {
                 try {
@@ -3043,7 +3209,10 @@
         this.stop = function () {};
 
         this.destroy = function () {
+            isDestroyed = true;
+            isAutoTesting = false;
             if (focusTimer) clearTimeout(focusTimer);
+            if (autoTestTimer) clearTimeout(autoTestTimer);
             if (activeProbe && activeProbe.abort) activeProbe.abort();
             scroll.destroy();
             html.remove();
@@ -3931,33 +4100,53 @@
             '.customs-torrent-more-title{font-size:1.1em;font-weight:700;color:#fff;}',
             '.customs-torrent-more-sub{font-size:.85em;color:#8b949e;margin-top:.3em;}',
 
-            /* Повноекранний екран Customs Torrents (Cinema Glass) */
-            '.customs-torrents-screen{position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;background:#0e1114 !important;color:#f3f4f6 !important;display:flex !important;flex-direction:column !important;font-family:sans-serif !important;z-index:9999 !important;box-sizing:border-box !important;}',
-            '.customs-ts-head{padding:1.6em 2.5em 1.2em !important;border-bottom:1px solid rgba(255,255,255,.08) !important;background:rgba(14,17,20,.98) !important;display:flex !important;flex-direction:column !important;gap:1em !important;flex-shrink:0 !important;}',
-            '.customs-ts-head__info{display:flex;flex-direction:column;gap:.3em;}',
-            '.customs-ts-head__badge{display:inline-block;padding:.2em .6em;border-radius:.4em;background:rgba(16,185,129,.2);color:#34d399;font-weight:800;font-size:.75em;letter-spacing:.05em;border:1px solid rgba(16,185,129,.35);align-self:flex-start;}',
-            '.customs-ts-head__title{font-size:1.8em;font-weight:700;color:#ffffff;line-height:1.2;}',
-            '.customs-ts-head__sub{font-size:.9em;color:#9ca3af;}',
-            '.customs-ts-head__controls{display:flex;align-items:center;gap:.7em;flex-wrap:wrap;}',
+            /* Повноекранний екран Customs Torrents (2-колонковий Cinema Glass) */
+            '.customs-torrents-screen{position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;background:#0c0f12 !important;color:#f3f4f6 !important;display:flex !important;flex-direction:row !important;font-family:sans-serif !important;z-index:9999 !important;box-sizing:border-box !important;overflow:hidden !important;}',
+
+            /* Ліва колонка: Інфо про фільм/серіал */
+            '.customs-ts-sidebar{width:26em !important;min-width:22em !important;max-width:28em !important;height:100vh !important;padding:2.2em 2em 3em !important;box-sizing:border-box !important;display:flex !important;flex-direction:column !important;gap:.75em !important;overflow-y:auto !important;border-right:1px solid rgba(255,255,255,.07) !important;background:rgba(14,18,22,.98) !important;flex-shrink:0 !important;}',
+            '.customs-ts-poster-wrap{width:100% !important;display:flex !important;justify-content:flex-start !important;margin-bottom:.4em !important;}',
+            '.customs-ts-poster{width:13.5em !important;height:20em !important;border-radius:1em !important;object-fit:cover !important;box-shadow:0 10px 30px rgba(0,0,0,.6) !important;border:1px solid rgba(255,255,255,.12) !important;}',
+            '.customs-ts-meta-line{display:flex !important;align-items:center !important;gap:.6em !important;font-size:.95em !important;color:#9ca3af !important;font-weight:600 !important;}',
+            '.customs-ts-meta-sep{color:#4b5563 !important;font-size:.8em !important;}',
+            '.customs-ts-rate-line{display:flex !important;align-items:center !important;gap:.8em !important;margin-top:.2em !important;}',
+            '.customs-ts-rate{font-size:1.15em !important;font-weight:800 !important;color:#fbbf24 !important;display:flex !important;align-items:center !important;gap:.3em !important;}',
+            '.customs-ts-age{font-size:.8em !important;font-weight:700 !important;color:#d1d5db !important;border:1px solid rgba(255,255,255,.2) !important;padding:.15em .5em !important;border-radius:.35em !important;background:rgba(255,255,255,.05) !important;}',
+            '.customs-ts-title{font-size:1.55em !important;font-weight:800 !important;color:#ffffff !important;line-height:1.25 !important;margin-top:.2em !important;word-break:break-word !important;}',
+            '.customs-ts-genres{font-size:.9em !important;color:#8b949e !important;line-height:1.4 !important;}',
+            '.customs-ts-descr{font-size:.86em !important;color:#6b7280 !important;line-height:1.5 !important;overflow:hidden !important;display:-webkit-box !important;-webkit-line-clamp:6 !important;-webkit-box-orient:vertical !important;margin-top:.4em !important;}',
+
+            /* Права колонка: Керування та роздачі */
+            '.customs-ts-main{flex:1 1 auto !important;height:100vh !important;display:flex !important;flex-direction:column !important;overflow:hidden !important;position:relative !important;}',
+            '.customs-ts-head{padding:1.6em 2.2em 1.2em !important;border-bottom:1px solid rgba(255,255,255,.07) !important;background:rgba(12,15,18,.98) !important;display:flex !important;align-items:center !important;justify-content:space-between !important;gap:1em !important;flex-shrink:0 !important;}',
+            '.customs-ts-head__controls{display:flex !important;align-items:center !important;gap:.7em !important;flex-wrap:wrap !important;}',
+            '.customs-ts-autotest-status{display:flex !important;align-items:center !important;gap:.5em !important;padding:.45em .9em !important;border-radius:.75em !important;background:rgba(255,255,255,.05) !important;border:1px solid rgba(255,255,255,.1) !important;font-size:.85em !important;color:#9ca3af !important;white-space:nowrap !important;margin-left:auto !important;}',
+            '.customs-ts-autotest-val{color:#e5e7eb !important;font-weight:700 !important;}',
+            '.customs-autotest-pulse{color:#60a5fa !important;animation:customs-live-pulse 1.4s infinite ease-in-out !important;font-weight:700 !important;}',
             '.customs-ts-ctrl{padding:.5em 1em;border-radius:.75em;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#d1d5db;font-size:.88em;font-weight:600;cursor:pointer;transition:all .18s ease;display:flex;align-items:center;gap:.4em;}',
             '.customs-ts-ctrl.focus{background:rgba(255,255,255,.22);border-color:rgba(255,255,255,.5);color:#fff;box-shadow:0 0 0 .2em rgba(255,255,255,.8);transform:scale(1.03);}',
             '.customs-ts-ctrl.active{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#ffffff;font-weight:700;}',
             '.customs-ts-ctrl__label{color:#9ca3af;font-size:.9em;}',
             '.customs-ts-ctrl__val{color:#fff;font-weight:700;}',
-            '.customs-ts-body{flex:1 1 auto !important;position:relative !important;width:100% !important;height:calc(100vh - 12em) !important;min-height:20em !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
+            '.customs-ts-body{flex:1 1 auto !important;position:relative !important;width:100% !important;height:calc(100vh - 5em) !important;min-height:20em !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
             '.customs-ts-body .scroll{position:absolute !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100% !important;height:100% !important;max-height:none !important;overflow:hidden !important;display:block !important;}',
-            '.customs-ts-body .scroll__content{width:100% !important;padding:1.4em 2.5em 5em !important;box-sizing:border-box !important;}',
+            '.customs-ts-body .scroll__content{width:100% !important;padding:1.2em 2.2em 5em !important;box-sizing:border-box !important;}',
             '.customs-ts-body .scroll__body{width:100% !important;display:flex !important;flex-direction:column !important;gap:.8em !important;box-sizing:border-box !important;}',
             '.customs-ts-card{width:100% !important;box-sizing:border-box !important;flex-shrink:0 !important;margin-bottom:0 !important;background:#181c20;border:1px solid rgba(255,255,255,.08);border-radius:1.1em;padding:1.1em 1.3em;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:transform .18s ease, border-color .18s ease, background-color .18s ease;cursor:pointer;display:flex;flex-direction:column;gap:.6em;}',
             '.customs-ts-card.focus{background:#20262e;border-color:rgba(255,255,255,.45);box-shadow:0 0 0 .22em rgba(255,255,255,.9), 0 12px 30px rgba(0,0,0,.6);transform:scale(1.015);}',
             '.customs-ts-card__title{font-size:1.05em;font-weight:600;color:#f3f4f6;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}',
             '.customs-ts-card__badges{display:flex;align-items:center;flex-wrap:wrap;gap:.45em;}',
             '.customs-ts-tag{display:inline-block;padding:.2em .6em;border-radius:.4em;font-size:.78em;font-weight:600;line-height:1.2;letter-spacing:.02em;}',
-            '.customs-ts-tag--season{background:rgba(255,255,255,.16);color:#ffffff;font-weight:700;}',
+            '.customs-ts-tag--season{background:rgba(255,255,255,.18);color:#ffffff;font-weight:700;}',
+            '.customs-ts-tag--episodes{background:rgba(0,0,0,.45);color:#9ca3af;border:1px solid rgba(255,255,255,.15);font-weight:600;}',
             '.customs-ts-tag--quality{border:1px solid rgba(255,255,255,.3);color:#e5e7eb;font-weight:600;}',
+            '.customs-ts-tag--q-4k{background:linear-gradient(135deg, rgba(245,158,11,.3), rgba(217,119,6,.2)) !important;color:#fbbf24 !important;border:1px solid rgba(245,158,11,.5) !important;font-weight:800 !important;}',
+            '.customs-ts-tag--q-fhd{background:linear-gradient(135deg, rgba(59,130,246,.25), rgba(37,99,235,.15)) !important;color:#60a5fa !important;border:1px solid rgba(59,130,246,.4) !important;font-weight:700 !important;}',
+            '.customs-ts-tag--voice{background:rgba(139,92,246,.18);color:#c084fc;border:1px solid rgba(139,92,246,.35);font-weight:600;}',
             '.customs-ts-tag--codec{background:rgba(255,255,255,.06);color:#9ca3af;}',
             '.customs-ts-tag--ukr{background:rgba(245,158,11,.18);color:#fbbf24;border:1px solid rgba(245,158,11,.35);font-weight:700;}',
             '.customs-ts-tag--tracker{text-transform:uppercase;padding:.15em .5em;border-radius:.35em;background:rgba(59,130,246,.15);color:#93c5fd;font-size:.85em;font-weight:700;border:1px solid rgba(59,130,246,.25);}',
+            '.customs-ts-date{color:#6b7280;font-size:.88em;margin-left:.3em;}',
             '.customs-ts-card__footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.8em;margin-top:.4em;padding-top:.7em;border-top:1px solid rgba(255,255,255,.06);font-size:.84em;}',
             '.customs-ts-card__meta-left{display:flex;align-items:center;gap:.6em;color:#8b949e;}',
             '.customs-ts-card__meta-right{display:flex;align-items:center;gap:.9em;margin-left:auto;}',
@@ -4074,6 +4263,12 @@
     }
 
     function start() {
+        try {
+            if (!window.lampa_settings) window.lampa_settings = {};
+            window.lampa_settings.torrents_use = true;
+            window.lampa_settings.demo = false;
+            window.lampa_settings.read_only = false;
+        } catch (eSettings) {}
         addStyle();
         addSettings();
         registerManifestAndName();
