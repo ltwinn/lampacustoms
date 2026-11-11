@@ -2281,57 +2281,31 @@
         var torrUrl = getTorrServerUrl();
         var reqSpeed = calculateRequiredSpeed(item, movie, isSeries);
         var isAborted = false;
-        var probeXhr = null;
         var pollTimer = null;
         var pollTimer2 = null;
         var dropHash = null;
 
-        // 1. Надсилаємо GET /stream/...&preload для запуску кешування
-        try {
-            probeXhr = new XMLHttpRequest();
-            var preloadUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&preload';
-            probeXhr.open('GET', preloadUrl, true);
-            probeXhr.timeout = 4500;
-            probeXhr.send();
-        } catch (ePreload) {}
+        var netPreload = new Lampa.Reguest();
+        var netAdd = new Lampa.Reguest();
+        var netStat = new Lampa.Reguest();
+        var netDrop = new Lampa.Reguest();
+        var netEcho = new Lampa.Reguest();
 
-        // Додатково надсилаємо POST /torrents action: add для нових TorrServer MatriX
-        try {
-            var addXhr = new XMLHttpRequest();
-            addXhr.open('POST', torrUrl + '/torrents', true);
-            addXhr.setRequestHeader('Content-Type', 'application/json');
-            addXhr.timeout = 2000;
-            addXhr.send(JSON.stringify({
-                action: 'add',
-                link: item.magnet,
-                title: 'probe_' + (item.title || 'customs').slice(0, 30),
-                save_to_db: false
-            }));
-        } catch (eAdd) {}
+        // 1. Надсилаємо preload через Lampa.Reguest (сумісно з Tizen/webOS/Android TV)
+        netPreload.timeout(5000);
+        var preloadUrl = torrUrl + '/stream/fname.mkv?link=' + encodeURIComponent(item.magnet) + '&preload';
+        netPreload.silent(preloadUrl, function () {}, function () {});
 
-        function queryStat(onSuccess, onError) {
-            var statXhr = new XMLHttpRequest();
-            var statUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&stat';
-            statXhr.open('GET', statUrl, true);
-            statXhr.timeout = 2500;
-            statXhr.onreadystatechange = function () {
-                if (statXhr.readyState === 4) {
-                    if (statXhr.status === 200) {
-                        try {
-                            var json = JSON.parse(statXhr.responseText);
-                            onSuccess(json);
-                        } catch (eParse) {
-                            onError(eParse);
-                        }
-                    } else {
-                        onError(new Error('HTTP ' + statXhr.status));
-                    }
-                }
-            };
-            statXhr.onerror = onError;
-            statXhr.ontimeout = onError;
-            statXhr.send();
-        }
+        // 2. Також додаємо роздачу через POST /torrents action: add (для TorrServer MatriX)
+        netAdd.timeout(3000);
+        netAdd.silent(torrUrl + '/torrents', function (res) {
+            if (res && res.hash) dropHash = res.hash;
+        }, function () {}, JSON.stringify({
+            action: 'add',
+            link: item.magnet,
+            title: 'probe_' + (item.title || 'customs').slice(0, 30),
+            save_to_db: false
+        }));
 
         function cleanupAndReturn(result) {
             if (isAborted) return;
@@ -2340,30 +2314,22 @@
             if (pollTimer) clearTimeout(pollTimer);
             if (pollTimer2) clearTimeout(pollTimer2);
 
-            if (probeXhr) {
-                try { probeXhr.abort(); } catch (e) {}
-            }
-
-            if (dropHash) {
-                try {
-                    var dropXhr = new XMLHttpRequest();
-                    dropXhr.open('POST', torrUrl + '/torrents', true);
-                    dropXhr.setRequestHeader('Content-Type', 'application/json');
-                    dropXhr.timeout = 1500;
-                    dropXhr.send(JSON.stringify({ action: 'drop', hash: dropHash }));
-                } catch (eDrop) {}
-            }
+            netPreload.clear();
+            netAdd.clear();
+            netStat.clear();
+            netEcho.clear();
 
             if (callback) callback(result);
         }
 
         function evaluateAndReturn(stat) {
-            var speed = (stat && stat.download_speed) || 0;
-            var seeders = (stat && (stat.connected_seeders || stat.active_peers)) || item.seeds || 0;
-            var bytesRead = (stat && (stat.bytes_read || stat.preloaded_bytes)) || 0;
+            if (stat && stat.hash) dropHash = stat.hash;
+            var speed = (stat && (stat.download_speed || stat.DownloadSpeed)) || 0;
+            var seeders = (stat && (stat.connected_seeders || stat.active_peers || stat.ConnectedSeeders || stat.ActivePeers)) || item.seeds || 0;
+            var bytesRead = (stat && (stat.bytes_read || stat.preloaded_bytes || stat.BytesRead || stat.PreloadedBytes)) || 0;
 
             if (speed === 0 && bytesRead > 0) {
-                speed = Math.round(bytesRead / 3.0);
+                speed = Math.round(bytesRead / 2.5);
             }
 
             var ratio = reqSpeed > 0 ? (speed / reqSpeed) : 1;
@@ -2384,54 +2350,79 @@
             });
         }
 
-        // Опитуємо через 2.0 секунди для завершення рукостискання пірів
+        function queryStat(onSuccess, onError) {
+            netStat.timeout(4000);
+            var statUrl = torrUrl + '/stream/fname.mkv?link=' + encodeURIComponent(item.magnet) + '&stat';
+            netStat.silent(statUrl, function (res) {
+                if (res && typeof res === 'object') {
+                    onSuccess(res);
+                } else if (typeof res === 'string') {
+                    try {
+                        onSuccess(JSON.parse(res));
+                    } catch (e) {
+                        onError(e);
+                    }
+                } else {
+                    onError(new Error('No response'));
+                }
+            }, function (err) {
+                onError(err);
+            });
+        }
+
+        // Опитуємо через 2.2 с
         pollTimer = setTimeout(function () {
             if (isAborted) return;
             queryStat(function (res1) {
-                if (res1 && res1.hash) dropHash = res1.hash;
-                var sp1 = (res1 && res1.download_speed) || 0;
-
+                var sp1 = (res1 && (res1.download_speed || res1.DownloadSpeed)) || 0;
                 if (sp1 > 0) {
                     evaluateAndReturn(res1);
                 } else {
-                    // Якщо піри ще розганяються, зачекаємо ще 1.4 секунди
+                    // Якщо піри ще розганяються, зачекаємо ще 1.5 с
                     pollTimer2 = setTimeout(function () {
                         if (isAborted) return;
                         queryStat(function (res2) {
-                            if (res2 && res2.hash) dropHash = res2.hash;
                             evaluateAndReturn(res2);
                         }, function () {
                             evaluateAndReturn(res1 || {});
                         });
-                    }, 1400);
+                    }, 1500);
                 }
             }, function () {
-                cleanupAndReturn({
-                    speed: 0,
-                    seeders: 0,
-                    reqSpeed: reqSpeed,
-                    ratio: 0,
-                    status: 'offline',
-                    text: '⚠️ TorrServer офлайн'
+                // Перевіримо чи TorrServer взагалі онлайн
+                netEcho.timeout(2500);
+                netEcho.silent(torrUrl + '/echo', function () {
+                    // Сервер доступний, але роздача повільна або не віддає стати
+                    evaluateAndReturn({ download_speed: 0, connected_seeders: item.seeds || 0 });
+                }, function () {
+                    netEcho.silent(torrUrl + '/settings', function () {
+                        evaluateAndReturn({ download_speed: 0, connected_seeders: item.seeds || 0 });
+                    }, function () {
+                        cleanupAndReturn({
+                            speed: 0,
+                            seeders: 0,
+                            reqSpeed: reqSpeed,
+                            ratio: 0,
+                            status: 'offline',
+                            text: '⚠️ TorrServer не відповідає'
+                        });
+                    });
                 });
             });
-        }, 2000);
+        }, 2200);
 
         return {
             abort: function () {
                 isAborted = true;
                 if (pollTimer) clearTimeout(pollTimer);
                 if (pollTimer2) clearTimeout(pollTimer2);
-                if (probeXhr) {
-                    try { probeXhr.abort(); } catch (e) {}
-                }
+                netPreload.clear();
+                netAdd.clear();
+                netStat.clear();
+                netEcho.clear();
                 if (dropHash) {
-                    try {
-                        var dropXhr = new XMLHttpRequest();
-                        dropXhr.open('POST', torrUrl + '/torrents', true);
-                        dropXhr.setRequestHeader('Content-Type', 'application/json');
-                        dropXhr.send(JSON.stringify({ action: 'drop', hash: dropHash }));
-                    } catch (eDrop) {}
+                    netDrop.timeout(2000);
+                    netDrop.silent(torrUrl + '/torrents', function () {}, function () {}, JSON.stringify({ action: 'drop', hash: dropHash }));
                 }
             }
         };
@@ -2520,7 +2511,11 @@
                             playSeriesTorrentFile(item, sel.file, videoFiles, torrUrl);
                         },
                         onBack: function () {
-                            Lampa.Controller.toggle(ROW_TORRENTS);
+                            if (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active().component === 'customs_torrents_screen') {
+                                Lampa.Controller.toggle('customs_torrents_screen');
+                            } else {
+                                Lampa.Controller.toggle(ROW_TORRENTS);
+                            }
                         }
                     });
                 } else if (videoFiles.length === 1) {
@@ -2710,14 +2705,19 @@
         var activeProbe = null;
 
         function renderSkeletons() {
-            scroll.clear();
+            if (scroll.clear) scroll.clear();
+            if (scroll.body) $(scroll.body()).empty();
             for (var s = 0; s < 5; s++) {
                 var skel = $('<div class="customs-ts-card customs-ts-card--skel">' +
                     '<div class="customs-ts-skel-line customs-ts-skel-title"></div>' +
                     '<div class="customs-ts-skel-line customs-ts-skel-badges"></div>' +
                     '<div class="customs-ts-skel-line customs-ts-skel-foot"></div>' +
                 '</div>');
-                scroll.append(skel[0]);
+                if (scroll.body) {
+                    $(scroll.body()).append(skel);
+                } else {
+                    scroll.append(skel[0]);
+                }
             }
         }
 
@@ -2745,7 +2745,8 @@
         }
 
         function renderCards() {
-            scroll.clear();
+            if (scroll.clear) scroll.clear();
+            if (scroll.body) $(scroll.body()).empty();
 
             var list = allItems.slice();
 
@@ -2779,7 +2780,11 @@
                     '<div class="customs-ts-empty__title">Роздач не знайдено</div>' +
                     '<div class="customs-ts-empty__desc">Спробуйте змінити фільтр або перевірте налаштування парсера</div>' +
                 '</div>');
-                scroll.append(empty[0]);
+                if (scroll.body) {
+                    $(scroll.body()).append(empty);
+                } else {
+                    scroll.append(empty[0]);
+                }
                 return;
             }
 
@@ -2812,8 +2817,18 @@
                         handleTorrentPlayback(item, movie, isSeries);
                     });
 
-                    scroll.append(card[0]);
+                    if (scroll.body) {
+                        $(scroll.body()).append(card);
+                    } else {
+                        scroll.append(card[0]);
+                    }
                 })(list[i], i);
+            }
+
+            if (Lampa.Layer && Lampa.Layer.visible) {
+                try {
+                    Lampa.Layer.visible(html[0]);
+                } catch (eLayer) {}
             }
 
             if (!inHeader) {
@@ -2828,7 +2843,8 @@
         }
 
         this.create = function () {
-            body.append(scroll.render(true));
+            scroll.minus(html.find('.customs-ts-head'));
+            body.append(scroll.render());
             setupHeaderControls();
 
             if (allItems && allItems.length) {
@@ -2845,8 +2861,8 @@
             return html;
         };
 
-        this.render = function () {
-            return html;
+        this.render = function (js) {
+            return js ? html[0] : html;
         };
 
         this.start = function () {
@@ -3801,8 +3817,11 @@
             '.customs-ts-ctrl.active{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#ffffff;font-weight:700;}',
             '.customs-ts-ctrl__label{color:#9ca3af;font-size:.9em;}',
             '.customs-ts-ctrl__val{color:#fff;font-weight:700;}',
-            '.customs-ts-body{flex:1;position:relative;overflow:hidden;padding:1.2em 2.5em 2.5em;}',
-            '.customs-ts-card{background:#181c20;border:1px solid rgba(255,255,255,.08);border-radius:1.1em;padding:1.1em 1.3em;margin-bottom:.9em;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:transform .18s ease, border-color .18s ease, background-color .18s ease;cursor:pointer;display:flex;flex-direction:column;gap:.6em;}',
+            '.customs-ts-body{flex:1 1 0% !important;min-height:0 !important;position:relative !important;width:100% !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
+            '.customs-ts-body .scroll{position:absolute !important;top:0 !important;left:0 !important;width:100% !important;height:100% !important;max-height:none !important;overflow:hidden !important;display:block !important;}',
+            '.customs-ts-body .scroll__content{width:100% !important;padding:1.4em 2.5em 4em !important;box-sizing:border-box !important;}',
+            '.customs-ts-body .scroll__body{width:100% !important;display:flex !important;flex-direction:column !important;gap:.8em !important;box-sizing:border-box !important;}',
+            '.customs-ts-card{width:100% !important;box-sizing:border-box !important;flex-shrink:0 !important;margin-bottom:0 !important;background:#181c20;border:1px solid rgba(255,255,255,.08);border-radius:1.1em;padding:1.1em 1.3em;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:transform .18s ease, border-color .18s ease, background-color .18s ease;cursor:pointer;display:flex;flex-direction:column;gap:.6em;}',
             '.customs-ts-card.focus{background:#20262e;border-color:rgba(255,255,255,.45);box-shadow:0 0 0 .22em rgba(255,255,255,.9), 0 12px 30px rgba(0,0,0,.6);transform:scale(1.015);}',
             '.customs-ts-card__title{font-size:1.05em;font-weight:600;color:#f3f4f6;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}',
             '.customs-ts-card__badges{display:flex;align-items:center;flex-wrap:wrap;gap:.45em;}',
