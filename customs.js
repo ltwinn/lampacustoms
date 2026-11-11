@@ -326,14 +326,14 @@
 
         Lampa.SettingsApi.addParam({
             component: COMPONENT_NAME,
-            param: { name: 'customs_torrserver_url', type: 'input', default: '' },
+            param: { name: 'customs_torrserver_url', type: 'input', values: '', default: '', placeholder: 'http://127.0.0.1:8090' },
             field: { name: 'Адреса TorrServer', description: 'Залиште порожнім для авто-визначення з налаштувань Lampa' }
         });
 
         Lampa.SettingsApi.addParam({
             component: COMPONENT_NAME,
-            param: { name: 'customs_parser_url', type: 'input', default: '' },
-            field: { name: 'Адреса парсера торрентів', description: 'Залиште порожнім для авто з Lampa або вкажіть JacRed (наприклад, https://jacred.xyz)' }
+            param: { name: 'customs_parser_url', type: 'input', values: '', default: '', placeholder: 'http://jac.red' },
+            field: { name: 'Адреса парсера торрентів', description: 'Залиште порожнім для авто з Lampa або вкажіть JacRed' }
         });
 
         Lampa.SettingsApi.addParam({
@@ -1993,7 +1993,7 @@
         if (custom && typeof custom === 'string' && custom.trim().length > 0) {
             return custom.trim().replace(/\/+$/, '');
         }
-        var def = Lampa.Storage.get('parser_jackett_url') || Lampa.Storage.get('parser_url') || 'https://jacred.xyz';
+        var def = Lampa.Storage.get('jackett_url') || Lampa.Storage.get('parser_jackett_url') || Lampa.Storage.get('parser_url') || 'http://jac.red';
         return (def + '').trim().replace(/\/+$/, '');
     }
 
@@ -2002,7 +2002,7 @@
         if (custom && typeof custom === 'string' && custom.trim().length > 0) {
             return custom.trim();
         }
-        var def = Lampa.Storage.get('parser_jackett_key') || Lampa.Storage.get('parser_key') || '';
+        var def = Lampa.Storage.get('jackett_key') || Lampa.Storage.get('parser_jackett_key') || Lampa.Storage.get('parser_key') || '';
         return (def + '').trim();
     }
 
@@ -2179,13 +2179,9 @@
         return result.slice(0, 15);
     }
 
-    function searchTorrents(movie, isSeries, callback) {
+    function fallbackDirectParserSearch(query, movie, isSeries, callback) {
         var parserUrl = getParserUrl();
         var parserKey = getParserKey();
-        var query = (movie.title || movie.name || '').trim();
-        if (!query) query = (movie.original_title || movie.original_name || '').trim();
-        if (!query) return callback([]);
-
         var network = new Lampa.Reguest();
         var searchUrl;
 
@@ -2228,6 +2224,50 @@
         }, function () {
             callback([]);
         });
+    }
+
+    function searchTorrents(movie, isSeries, callback) {
+        var customParserUrl = Lampa.Storage.get('customs_parser_url', '');
+        var query = (movie.title || movie.name || '').trim();
+        if (!query) query = (movie.original_title || movie.original_name || '').trim();
+        if (!query) return callback([]);
+
+        // 1. Пріоритет: Нативний парсер Lampa (якщо користувач не задав свій окремий URL)
+        if (!customParserUrl && Lampa.Parser && Lampa.Parser.get) {
+            try {
+                Lampa.Parser.get({
+                    search: query,
+                    movie: movie
+                }, function (res) {
+                    var items = (res && (res.Results || res.results)) || (Array.isArray(res) ? res : []);
+                    var parsed = normalizeTorrentItems(items, movie, isSeries);
+                    if (parsed.length > 0) {
+                        callback(parsed);
+                    } else {
+                        // Спробуємо оригінальну назву
+                        var origQuery = (movie.original_title || movie.original_name || '').trim();
+                        if (origQuery && origQuery !== query) {
+                            Lampa.Parser.get({
+                                search: origQuery,
+                                movie: movie
+                            }, function (res2) {
+                                var items2 = (res2 && (res2.Results || res2.results)) || (Array.isArray(res2) ? res2 : []);
+                                callback(normalizeTorrentItems(items2, movie, isSeries));
+                            }, function () {
+                                fallbackDirectParserSearch(query, movie, isSeries, callback);
+                            });
+                        } else {
+                            fallbackDirectParserSearch(query, movie, isSeries, callback);
+                        }
+                    }
+                }, function () {
+                    fallbackDirectParserSearch(query, movie, isSeries, callback);
+                });
+                return;
+            } catch (e) {}
+        }
+
+        fallbackDirectParserSearch(query, movie, isSeries, callback);
     }
 
     function probeTorrServerSpeed(item, movie, isSeries, callback) {
