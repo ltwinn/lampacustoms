@@ -2,14 +2,14 @@
  * Lampa Customs (customs.js)
  * 1. Стрічка трейлерів: TMDB (UA, RU, EN) + YouTube резерв (відразу під обкладинкою).
  * 2. Filmix швидкий перегляд: доступні варіанти озвучки, якість (4K/1080p/720p), орієнтовний розмір файлу та прямий запуск.
- * 3. Торренти (TorrServer): окрема кнопка у меню «Джерело», повноекранний список Cinema Glass, сортування за вагою ⬇️/⬆️, швидкі фільтри (4K/1080p/UKR), живий вимір швидкості TorrServer відносно бітрейту.
+ * 3. Торренти (TorrServer): окрема кнопка у меню «Джерело», повноекранний список Cinema Glass, сортування за вагою ⬇️/⬆️, швидкі фільтри (4K/1080p/UKR), кольорові індикатори сидів (▲/▼), вибір файлів/серій.
  * Сумісність з ES5 для телевізорів (Tizen, webOS, Android TV).
  */
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.5.5';
-    var PLUGIN_BUILD = '11.11 16:40';
+    var PLUGIN_VERSION = '1.5.8';
+    var PLUGIN_BUILD = '11.11 17:50';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     // Вбудований активатор можливостей TorrServer (аналог etor / cub.rip/plugin/etor)
@@ -339,7 +339,7 @@
         Lampa.SettingsApi.addParam({
             component: COMPONENT_NAME,
             param: { name: 'customs_torrents_enabled', type: 'trigger', default: true },
-            field: { name: 'Стрічка торрентів', description: 'Показувати стрічку роздач, відсортованих за вагою з індикатором швидкості' }
+            field: { name: 'Стрічка торрентів', description: 'Показувати роздачі з якістю, сидами, вагою та вибором серій' }
         });
 
         Lampa.SettingsApi.addParam({
@@ -2032,9 +2032,9 @@
         return row;
     }
 
-    // ---------- Модуль Торрентів (TorrServer Speed & Size) ----------
+    // ---------- Модуль Торрентів (TorrServer & JacRed) ----------
 
-    var torrServerSpeedCache = {};
+    var torrServerPeersCache = {};
     var cachedTorrentsForMovie = {};
 
     function getTorrServerUrl() {
@@ -2248,32 +2248,6 @@
         return tags;
     }
 
-    function calculateRequiredSpeed(item, movie, isSeries) {
-        var durationMinutes = 110;
-        if (isSeries) {
-            durationMinutes = (movie.episode_run_time && movie.episode_run_time[0]) || 45;
-        } else if (movie.runtime && movie.runtime > 20) {
-            durationMinutes = movie.runtime;
-        }
-
-        var episodes = 1;
-        if (isSeries) {
-            var epMatch = item.title.match(/(\d{1,3})\s*(?:сер|ep)/i);
-            if (epMatch) {
-                episodes = parseInt(epMatch[1], 10) || 8;
-            } else if (item.tags && item.tags.season && item.tags.season.indexOf('-') !== -1) {
-                episodes = 24;
-            } else {
-                episodes = 8;
-            }
-        }
-
-        var singleEpisodeBytes = item.sizeBytes / Math.max(1, episodes);
-        var durationSec = Math.max(600, durationMinutes * 60);
-        var requiredBytesPerSec = (singleEpisodeBytes / durationSec) * 1.3;
-        return Math.max(400 * 1024, requiredBytesPerSec);
-    }
-
     function normalizeTorrentItems(items, movie, isSeries) {
         if (!items || !items.length) return [];
         var result = [];
@@ -2422,200 +2396,168 @@
         fallbackDirectParserSearch(query, movie, isSeries, callback);
     }
 
-    function probeTorrServerSpeed(item, movie, isSeries, callback) {
+    function probeTorrServerLivePeers(item, callback) {
         if (!item || !item.magnet) {
-            if (callback) callback({ speed: 0, seeders: 0, reqSpeed: 1, ratio: 0, status: 'red', text: 'Немає посилання' });
+            if (callback) callback({ status: 'dead', livePeers: 0, totalPeers: 0 });
+            return { abort: function () {} };
+        }
+
+        if (torrServerPeersCache[item.magnet]) {
+            if (callback) callback(torrServerPeersCache[item.magnet]);
             return { abort: function () {} };
         }
 
         var torrUrl = getTorrServerUrl();
-        var reqSpeed = calculateRequiredSpeed(item, movie, isSeries);
         var isAborted = false;
         var pollTimer = null;
-        var pollTimer2 = null;
         var dropHash = null;
 
-        var netPreload = new Lampa.Reguest();
+        var hashMatch = typeof item.magnet === 'string' ? item.magnet.match(/btih:([a-f0-9]{40}|[a-z2-7]{32})/i) : null;
+        if (hashMatch) dropHash = hashMatch[1].toLowerCase();
+
         var netAdd = new Lampa.Reguest();
+        var netPreload = new Lampa.Reguest();
         var netStat = new Lampa.Reguest();
         var netDrop = new Lampa.Reguest();
         var netEcho = new Lampa.Reguest();
 
-        // 1. Надсилаємо preload через sendTorrReq (сумісно з Android TV native HTTP та Tizen/webOS)
-        netPreload.timeout(5000);
-        var preloadUrl = torrUrl + '/stream/fname.mkv?link=' + encodeURIComponent(item.magnet) + '&preload';
-        sendTorrReq(netPreload, preloadUrl, function () {}, function () {}, false, { dataType: 'text' });
-
-        // 2. Також додаємо роздачу через POST /torrents action: add (для TorrServer MatriX)
-        netAdd.timeout(3000);
+        // 1. Додаємо в TorrServer MatriX (save_to_db: false, без збереження в БД)
+        netAdd.timeout(2500);
         sendTorrReq(netAdd, torrUrl + '/torrents', function (res) {
             if (res && res.hash) dropHash = res.hash;
         }, function () {}, JSON.stringify({
             action: 'add',
             link: item.magnet,
-            title: 'probe_' + (item.title || 'customs').slice(0, 30),
+            title: 'chk_' + (item.title || 'customs').slice(0, 25),
             save_to_db: false
         }));
+
+        // 2. Preload запит для TorrServer 1.1 / 1.2
+        netPreload.timeout(3000);
+        var preloadUrl = torrUrl + '/stream/fname.mkv?link=' + encodeURIComponent(item.magnet) + '&preload';
+        sendTorrReq(netPreload, preloadUrl, function () {}, function () {}, false, { dataType: 'text' });
 
         function cleanupAndReturn(result) {
             if (isAborted) return;
             isAborted = true;
 
             if (pollTimer) clearTimeout(pollTimer);
-            if (pollTimer2) clearTimeout(pollTimer2);
-
-            netPreload.clear();
             netAdd.clear();
+            netPreload.clear();
             netStat.clear();
             netEcho.clear();
+
+            if (dropHash) {
+                netDrop.timeout(2000);
+                sendTorrReq(netDrop, torrUrl + '/torrents', function () {}, function () {}, JSON.stringify({ action: 'drop', hash: dropHash }), { dataType: 'text' });
+            }
+
+            if (result && result.status !== 'off') {
+                torrServerPeersCache[item.magnet] = result;
+            }
 
             if (callback) callback(result);
         }
 
-        function evaluateAndReturn(stat) {
-            if (stat && stat.hash) dropHash = stat.hash;
-            var speed = (stat && (stat.download_speed || stat.DownloadSpeed)) || 0;
-            var seeders = (stat && (stat.connected_seeders || stat.active_peers || stat.ConnectedSeeders || stat.ActivePeers)) || item.seeds || 0;
-            var bytesRead = (stat && (stat.bytes_read || stat.preloaded_bytes || stat.BytesRead || stat.PreloadedBytes)) || 0;
-
-            if (speed === 0 && bytesRead > 0) {
-                speed = Math.round(bytesRead / 2.5);
+        function evaluateStat(t) {
+            if (!t) {
+                checkOffline();
+                return;
             }
+            if (t.hash) dropHash = t.hash;
 
-            var ratio = reqSpeed > 0 ? (speed / reqSpeed) : 1;
-            var status = 'red';
+            var conn = parseInt(t.connected_seeders || t.ConnectedSeeders || 0, 10);
+            var act = parseInt(t.active_peers || t.ActivePeers || 0, 10);
+            var total = parseInt(t.total_peers || t.TotalPeers || 0, 10);
+            if (isNaN(conn)) conn = 0;
+            if (isNaN(act)) act = 0;
+            if (isNaN(total)) total = 0;
 
-            if (ratio >= 1.2 && speed > 500 * 1024) {
-                status = 'green';
-            } else if (ratio >= 0.75 && speed > 200 * 1024) {
-                status = 'yellow';
-            }
+            var live = Math.max(conn, act);
+            if (live === 0 && total > 0) live = 1;
+
+            var st = 'dead';
+            if (live >= 5) st = 'live';
+            else if (live >= 1) st = 'few';
 
             cleanupAndReturn({
-                speed: speed,
-                seeders: seeders,
-                reqSpeed: reqSpeed,
-                ratio: ratio,
-                status: status
+                status: st,
+                livePeers: live,
+                totalPeers: total
             });
         }
 
-        function queryStat(onSuccess, onError) {
-            netStat.timeout(4000);
-            var statUrl = torrUrl + '/stream/fname.mkv?link=' + encodeURIComponent(item.magnet) + '&stat';
-            sendTorrReq(netStat, statUrl, function (res) {
-                var torrent = (res && res.Torrent) ? res.Torrent : res;
-                if (torrent && (typeof torrent.download_speed !== 'undefined' || typeof torrent.connected_seeders !== 'undefined')) {
-                    onSuccess(torrent);
-                } else if (dropHash) {
-                    sendTorrReq(netStat, torrUrl + '/torrents', function (res2) {
-                        onSuccess((res2 && res2.Torrent) ? res2.Torrent : res2);
-                    }, onError, JSON.stringify({ action: 'get', hash: dropHash }));
-                } else {
-                    onError(new Error('No response'));
-                }
-            }, function (err) {
-                if (dropHash) {
-                    sendTorrReq(netStat, torrUrl + '/torrents', function (res2) {
-                        onSuccess((res2 && res2.Torrent) ? res2.Torrent : res2);
-                    }, onError, JSON.stringify({ action: 'get', hash: dropHash }));
-                } else {
-                    onError(err);
-                }
-            });
+        function checkOffline() {
+            netEcho.timeout(2000);
+            sendTorrReq(netEcho, torrUrl + '/', function () {
+                cleanupAndReturn({ status: 'dead', livePeers: 0, totalPeers: 0 });
+            }, function () {
+                cleanupAndReturn({ status: 'off', livePeers: 0, totalPeers: 0 });
+            }, false, { dataType: 'text' });
         }
 
-        // Опитуємо через 2.2 с
         pollTimer = setTimeout(function () {
             if (isAborted) return;
-            queryStat(function (res1) {
-                var sp1 = (res1 && (res1.download_speed || res1.DownloadSpeed)) || 0;
-                if (sp1 > 0) {
-                    evaluateAndReturn(res1);
-                } else {
-                    // Якщо піри ще розганяються, зачекаємо ще 1.5 с
-                    pollTimer2 = setTimeout(function () {
-                        if (isAborted) return;
-                        queryStat(function (res2) {
-                            evaluateAndReturn(res2);
-                        }, function () {
-                            evaluateAndReturn(res1 || {});
-                        });
-                    }, 1500);
-                }
+
+            netStat.timeout(3000);
+            var statUrl = torrUrl + '/stream/fname.mkv?link=' + encodeURIComponent(item.magnet) + '&stat';
+            sendTorrReq(netStat, statUrl, function (res) {
+                var t = (res && res.Torrent) ? res.Torrent : res;
+                evaluateStat(t);
             }, function () {
-                // Перевіримо чи TorrServer взагалі онлайн
-                netEcho.timeout(3000);
-                sendTorrReq(netEcho, torrUrl + '/', function () {
-                    evaluateAndReturn({ download_speed: 0, connected_seeders: item.seeds || 0 });
-                }, function (a) {
-                    if (a && a.status === 401) {
-                        evaluateAndReturn({ download_speed: 0, connected_seeders: item.seeds || 0 });
-                    } else {
-                        sendTorrReq(netEcho, torrUrl + '/settings', function () {
-                            evaluateAndReturn({ download_speed: 0, connected_seeders: item.seeds || 0 });
-                        }, function () {
-                            cleanupAndReturn({
-                                speed: 0,
-                                seeders: 0,
-                                reqSpeed: reqSpeed,
-                                ratio: 0,
-                                status: 'offline',
-                                text: '⚠️ TorrServer не відповідає'
-                            });
-                        }, JSON.stringify({ action: 'get' }), { dataType: 'text' });
-                    }
-                }, false, { dataType: 'text' });
+                if (dropHash) {
+                    sendTorrReq(netStat, torrUrl + '/torrents', function (res2) {
+                        var t2 = (res2 && res2.Torrent) ? res2.Torrent : res2;
+                        evaluateStat(t2);
+                    }, function () {
+                        checkOffline();
+                    }, JSON.stringify({ action: 'get', hash: dropHash }));
+                } else {
+                    checkOffline();
+                }
             });
-        }, 2200);
+        }, 2600);
 
         return {
             abort: function () {
-                isAborted = true;
-                if (pollTimer) clearTimeout(pollTimer);
-                if (pollTimer2) clearTimeout(pollTimer2);
-                netPreload.clear();
-                netAdd.clear();
-                netStat.clear();
-                netEcho.clear();
-                if (dropHash) {
-                    netDrop.timeout(2000);
-                    sendTorrReq(netDrop, torrUrl + '/torrents', function () {}, function () {}, JSON.stringify({ action: 'drop', hash: dropHash }), { dataType: 'text' });
-                }
+                cleanupAndReturn(null);
             }
         };
     }
 
-    function updateCardSpeedBadge(cardEl, res) {
-        if (!cardEl || !cardEl.length || !res) return;
-        var speedBadge = cardEl.find('.customs-torrent-speed');
-        speedBadge.removeClass('customs-speed--idle customs-speed--testing customs-speed--green customs-speed--yellow customs-speed--red customs-speed--offline');
+    function updateCardLivePeersBadge(cardEl, res) {
+        if (!cardEl || !cardEl.length) return;
+        var badge = cardEl.find('.customs-live-peers-badge');
+        if (!badge.length) return;
 
-        var speedText = '';
-        var mbps = (res.speed / (1024 * 1024)).toFixed(1);
+        badge.removeClass('customs-peer--testing customs-peer--live customs-peer--few customs-peer--dead customs-peer--off');
 
-        if (res.status === 'green') {
-            speedBadge.addClass('customs-speed--green');
-            var pct = Math.round(res.ratio * 100);
-            speedText = mbps + ' MB/s ✓ Запас ' + pct + '%';
-        } else if (res.status === 'yellow') {
-            speedBadge.addClass('customs-speed--yellow');
-            speedText = mbps + ' MB/s ⚠️ Впритул';
-        } else if (res.status === 'offline') {
-            speedBadge.addClass('customs-speed--offline');
-            speedText = '⚠️ TorrServer офлайн';
-        } else {
-            speedBadge.addClass('customs-speed--red');
-            if (res.speed > 0) {
-                speedText = mbps + ' MB/s ✕ Замало';
-            } else if (res.seeders > 0) {
-                speedText = '0 MB/s (P: ' + res.seeders + ') ✕ Повільно';
-            } else {
-                speedText = '0 MB/s ✕ Немає роздачі';
-            }
+        if (!res) {
+            badge.hide().empty();
+            return;
         }
 
-        speedBadge.find('.customs-speed-text').text(speedText);
+        badge.show();
+
+        if (res.testing) {
+            badge.addClass('customs-peer--testing');
+            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">Тест пірів...</span>');
+            return;
+        }
+
+        if (res.status === 'live') {
+            badge.addClass('customs-peer--live');
+            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">● ' + res.livePeers + ' онлайн</span>');
+        } else if (res.status === 'few') {
+            badge.addClass('customs-peer--few');
+            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">● ' + res.livePeers + ' онлайн</span>');
+        } else if (res.status === 'dead') {
+            badge.addClass('customs-peer--dead');
+            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">● 0 пірів (офлайн)</span>');
+        } else if (res.status === 'off') {
+            badge.addClass('customs-peer--off');
+            badge.html('<span class="customs-peer-txt">⚠️ TorrServer офлайн</span>');
+        }
     }
 
     function handleTorrentPlayback(item, movie, isSeries) {
@@ -2689,6 +2631,11 @@
     }
 
     function buildCinemaGlassCard(item, idx, movie, isSeries) {
+        var seedClass = 'customs-ts-stat__val customs-ts-stat__val--seeds';
+        if (item.seeds >= 10) seedClass += ' customs-seeds--high';
+        else if (item.seeds >= 3) seedClass += ' customs-seeds--med';
+        else seedClass += ' customs-seeds--low';
+
         var card = $('<div class="customs-ts-card selector" data-index="' + idx + '">' +
             '<div class="customs-ts-card__title">' + escapeHtml(item.title) + '</div>' +
             '<div class="customs-ts-card__badges"></div>' +
@@ -2698,17 +2645,14 @@
                     (item.date ? '<span class="customs-ts-date">' + escapeHtml(item.date) + '</span>' : '') +
                 '</div>' +
                 '<div class="customs-ts-card__meta-right">' +
+                    '<div class="customs-live-peers-badge" style="display:none;"></div>' +
                     '<div class="customs-ts-stat">' +
                         '<span class="customs-ts-stat__label">Роздають:</span>' +
-                        '<span class="customs-ts-stat__val customs-ts-stat__val--seeds">' + item.seeds + '</span>' +
+                        '<span class="' + seedClass + '">▲ ' + item.seeds + '</span>' +
                     '</div>' +
                     '<div class="customs-ts-stat">' +
                         '<span class="customs-ts-stat__label">Качають:</span>' +
-                        '<span class="customs-ts-stat__val">' + item.leech + '</span>' +
-                    '</div>' +
-                    '<div class="customs-speed-badge customs-speed--idle">' +
-                        '<span class="customs-speed-dot"></span>' +
-                        '<span class="customs-speed-text">⚡️ В черзі...</span>' +
+                        '<span class="customs-ts-stat__val">▼ ' + item.leech + '</span>' +
                     '</div>' +
                     '<span class="customs-ts-size">' + item.sizeStr + '</span>' +
                 '</div>' +
@@ -2741,50 +2685,11 @@
             badgesBox.append('<span class="customs-ts-tag customs-ts-tag--ukr">🇺🇦 UKR</span>');
         }
 
-        if (torrServerSpeedCache[item.magnet]) {
-            updateGlassCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
+        if (torrServerPeersCache[item.magnet]) {
+            updateCardLivePeersBadge(card, torrServerPeersCache[item.magnet]);
         }
 
         return card;
-    }
-
-    function updateGlassCardSpeedBadge(cardEl, res) {
-        if (!cardEl || !cardEl.length || !res) return;
-        var badge = cardEl.find('.customs-speed-badge');
-        badge.removeClass('customs-speed--idle customs-speed--testing customs-speed--green customs-speed--yellow customs-speed--red customs-speed--offline');
-
-        var speedText = '';
-        var mbps = (res.speed / (1024 * 1024)).toFixed(1);
-
-        if (res.status === 'green') {
-            badge.addClass('customs-speed--green');
-            var pct = Math.round(res.ratio * 100);
-            speedText = mbps + ' MB/s <span class="customs-subbadge">✓ Запас ' + pct + '%</span>';
-        } else if (res.status === 'yellow') {
-            badge.addClass('customs-speed--yellow');
-            speedText = mbps + ' MB/s <span class="customs-subbadge">⚠️ Впритул</span>';
-        } else if (res.status === 'offline') {
-            badge.addClass('customs-speed--offline');
-            speedText = '⚠️ TorrServer офлайн';
-        } else {
-            badge.addClass('customs-speed--red');
-            if (res.speed > 0) {
-                speedText = mbps + ' MB/s <span class="customs-subbadge">✕ Замало</span>';
-            } else if (res.seeders > 0) {
-                speedText = '0 MB/s (P: ' + res.seeders + ') <span class="customs-subbadge">✕ Повільно</span>';
-            } else {
-                speedText = '0 MB/s <span class="customs-subbadge">✕ Немає роздачі</span>';
-            }
-        }
-
-        badge.find('.customs-speed-text').html(speedText);
-    }
-
-    function setGlassCardTesting(cardEl) {
-        if (!cardEl || !cardEl.length) return;
-        var badge = cardEl.find('.customs-speed-badge');
-        badge.removeClass('customs-speed--idle customs-speed--green customs-speed--yellow customs-speed--red customs-speed--offline').addClass('customs-speed--testing');
-        badge.find('.customs-speed-text').html('Тест бітрейту...');
     }
 
     function openCustomsTorrentsScreen(movie, isSeries, initialList) {
@@ -2874,14 +2779,13 @@
         var allItems = object.initialList || cachedTorrentsForMovie[movie.id] || [];
         var lastFocused = null;
         var lastFocusedCard = null;
-        var focusTimer = null;
-        var autoTestTimer = null;
-        var isAutoTesting = false;
-        var isDestroyed = false;
-        var autoTestQueue = [];
-        var autoTestIdx = 0;
         var inHeader = false;
+        var autoQueue = [];
+        var autoIdx = 0;
+        var autoTimer = null;
+        var focusTimer = null;
         var activeProbe = null;
+        var isDestroyed = false;
 
         function findCardByMagnet(magnet) {
             if (!magnet) return $();
@@ -2890,92 +2794,63 @@
             });
         }
 
-        function updateAutoTestStatus(testedCount, totalCount, currentName) {
-            var statusVal = html.find('.customs-ts-autotest-val');
-            if (!statusVal.length) return;
-            if (totalCount === 0) {
-                statusVal.text('Немає 4K/FHD');
-            } else if (testedCount >= totalCount) {
-                statusVal.html('<span style="color:#4ade80;">✓ 4K/FHD перевірено (' + totalCount + ')</span>');
-            } else if (currentName) {
-                statusVal.html('<span class="customs-autotest-pulse">Тест ' + (testedCount + 1) + '/' + totalCount + ': ' + escapeHtml(currentName) + '</span>');
+        function updateQueueStatus() {
+            var valEl = html.find('.customs-ts-autotest-val');
+            if (!valEl.length) return;
+            if (!autoQueue.length) {
+                valEl.text('Немає роздач');
+            } else if (autoIdx >= autoQueue.length) {
+                valEl.html('<span style="color:#4ade80;">✓ Піри перевірено (' + autoQueue.length + ')</span>');
             } else {
-                statusVal.text(testedCount + ' / ' + totalCount + ' перевірено');
+                valEl.html('<span class="customs-autotest-pulse">⚡️ Піри: ' + (autoIdx + 1) + '/' + autoQueue.length + '</span>');
             }
         }
 
-        function startAutoTestQueue(itemsToTest) {
-            if (autoTestTimer) clearTimeout(autoTestTimer);
+        function startAutoQueue(listToTest) {
+            if (autoTimer) clearTimeout(autoTimer);
             if (activeProbe && activeProbe.abort) activeProbe.abort();
 
-            autoTestQueue = [];
-            for (var i = 0; i < itemsToTest.length; i++) {
-                var it = itemsToTest[i];
-                var q = (it.tags && it.tags.quality) || '';
-                var t = it.title || '';
-                if (q === '4K' || q === 'FHD' || /4k|2160|1080|fhd/i.test(t)) {
-                    autoTestQueue.push(it);
-                }
-            }
-
-            autoTestIdx = 0;
-            isAutoTesting = true;
-
-            var testedCount = 0;
-            for (var k = 0; k < autoTestQueue.length; k++) {
-                if (torrServerSpeedCache[autoTestQueue[k].magnet]) {
-                    testedCount++;
-                }
-            }
-            updateAutoTestStatus(testedCount, autoTestQueue.length);
-
-            stepAutoTest();
+            autoQueue = (listToTest || []).slice(0, 5);
+            autoIdx = 0;
+            updateQueueStatus();
+            stepQueue();
         }
 
-        function stepAutoTest() {
-            if (isDestroyed || !isAutoTesting) return;
-            if (autoTestIdx >= autoTestQueue.length) {
-                isAutoTesting = false;
-                updateAutoTestStatus(autoTestQueue.length, autoTestQueue.length);
+        function stepQueue() {
+            if (isDestroyed) return;
+            if (autoIdx >= autoQueue.length) {
+                updateQueueStatus();
                 return;
             }
 
-            var currentItem = autoTestQueue[autoTestIdx];
-
-            if (torrServerSpeedCache[currentItem.magnet]) {
-                var card = findCardByMagnet(currentItem.magnet);
-                if (card.length) {
-                    updateGlassCardSpeedBadge(card, torrServerSpeedCache[currentItem.magnet]);
-                }
-                autoTestIdx++;
-                stepAutoTest();
-                return;
-            }
-
+            var currentItem = autoQueue[autoIdx];
             var cardEl = findCardByMagnet(currentItem.magnet);
-            if (cardEl.length) {
-                setGlassCardTesting(cardEl);
+
+            if (torrServerPeersCache[currentItem.magnet]) {
+                if (cardEl.length) {
+                    updateCardLivePeersBadge(cardEl, torrServerPeersCache[currentItem.magnet]);
+                }
+                autoIdx++;
+                stepQueue();
+                return;
             }
 
-            var shortTitle = (currentItem.tags && currentItem.tags.quality ? currentItem.tags.quality : '') + ' ' + (currentItem.sizeStr || '');
-            updateAutoTestStatus(autoTestIdx, autoTestQueue.length, shortTitle);
+            if (cardEl.length) {
+                updateCardLivePeersBadge(cardEl, { testing: true });
+            }
+            updateQueueStatus();
 
-            activeProbe = probeTorrServerSpeed(currentItem, movie, isSeries, function (res) {
+            activeProbe = probeTorrServerLivePeers(currentItem, function (res) {
                 if (isDestroyed) return;
-                if (res && res.speed > 0) {
-                    torrServerSpeedCache[currentItem.magnet] = res;
-                }
                 var targetCard = findCardByMagnet(currentItem.magnet);
                 if (targetCard.length) {
-                    updateGlassCardSpeedBadge(targetCard, res);
+                    updateCardLivePeersBadge(targetCard, res);
                 }
-
-                autoTestIdx++;
-                updateAutoTestStatus(autoTestIdx, autoTestQueue.length);
-
-                autoTestTimer = setTimeout(function () {
-                    stepAutoTest();
-                }, 250);
+                autoIdx++;
+                updateQueueStatus();
+                autoTimer = setTimeout(function () {
+                    stepQueue();
+                }, 200);
             });
         }
 
@@ -3073,29 +2948,22 @@
                         inHeader = false;
                         lastFocused = this;
                         lastFocusedCard = this;
-                        scroll.update($(this), true);
+                        try { scroll.update(this, true); } catch (eUp) {}
 
                         if (focusTimer) clearTimeout(focusTimer);
-                        focusTimer = setTimeout(function () {
-                            if (torrServerSpeedCache[item.magnet]) {
-                                updateGlassCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
-                            } else {
-                                setGlassCardTesting(card);
-                                if (activeProbe && activeProbe.abort) activeProbe.abort();
-                                activeProbe = probeTorrServerSpeed(item, movie, isSeries, function (res) {
-                                    if (isDestroyed) return;
-                                    if (res && res.speed > 0) {
-                                        torrServerSpeedCache[item.magnet] = res;
-                                    }
-                                    updateGlassCardSpeedBadge(card, res);
-                                    if (isAutoTesting) {
-                                        autoTestTimer = setTimeout(function () {
-                                            stepAutoTest();
-                                        }, 300);
-                                    }
-                                });
-                            }
-                        }, 400);
+                        if (torrServerPeersCache[item.magnet]) {
+                            updateCardLivePeersBadge($(this), torrServerPeersCache[item.magnet]);
+                        } else {
+                            var _c = $(this);
+                            focusTimer = setTimeout(function () {
+                                if (!torrServerPeersCache[item.magnet]) {
+                                    updateCardLivePeersBadge(_c, { testing: true });
+                                    probeTorrServerLivePeers(item, function (res) {
+                                        updateCardLivePeersBadge(_c, res);
+                                    });
+                                }
+                            }, 500);
+                        }
                     });
 
                     card.on('hover:enter', function () {
@@ -3106,7 +2974,7 @@
                 })(list[i], i);
             }
 
-            startAutoTestQueue(list);
+            startAutoQueue(list);
 
             if (Lampa.Layer && Lampa.Layer.visible) {
                 try {
@@ -3121,6 +2989,7 @@
                     lastFocused = first;
                     Lampa.Controller.collectionSet(scroll.render());
                     Lampa.Controller.collectionFocus(first, scroll.render());
+                    try { scroll.update(first, true); } catch (eUp) {}
                 }
             }
         }
@@ -3130,6 +2999,9 @@
                 try { _this.activity.loader(false); } catch (eL) {}
             }
             body.append(scroll.render());
+            try {
+                if (scroll.minus) scroll.minus(html.find('.customs-ts-head'));
+            } catch (eM) {}
             setupHeaderControls();
 
             if (allItems && allItems.length) {
@@ -3161,42 +3033,87 @@
                 toggle: function () {
                     if (inHeader) {
                         Lampa.Controller.collectionSet(html.find('.customs-ts-head__controls'));
-                        Lampa.Controller.collectionFocus(lastFocused || html.find('.customs-ts-ctrl').eq(0)[0], html.find('.customs-ts-head__controls'));
+                        var targetBtn = lastFocused || html.find('.customs-ts-head__controls .selector.active')[0] || html.find('.customs-ts-ctrl')[0];
+                        Lampa.Controller.collectionFocus(targetBtn, html.find('.customs-ts-head__controls'));
                     } else {
                         Lampa.Controller.collectionSet(scroll.render());
-                        var target = lastFocusedCard || scroll.render().find('.customs-ts-card.selector').eq(0)[0];
-                        Lampa.Controller.collectionFocus(target, scroll.render());
+                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var target = lastFocusedCard && $.contains(scroll.render()[0], lastFocusedCard) ? lastFocusedCard : allCards[0];
+                        if (target) {
+                            lastFocusedCard = target;
+                            lastFocused = target;
+                            Lampa.Controller.collectionFocus(target, scroll.render());
+                            try { scroll.update(target, true); } catch (eUpd) {}
+                        }
                     }
                 },
                 up: function () {
                     if (inHeader) {
-                        // Already in header
-                    } else {
-                        if (Navigator.canmove('up')) {
-                            Navigator.move('up');
-                        } else {
-                            inHeader = true;
-                            Lampa.Controller.collectionSet(html.find('.customs-ts-head__controls'));
-                            var targetHead = html.find('.customs-ts-head__controls .selector.active')[0] || html.find('.customs-ts-ctrl')[0];
-                            Lampa.Controller.collectionFocus(targetHead, html.find('.customs-ts-head__controls'));
+                        if (Lampa.Controller && Lampa.Controller.toggle) {
+                            try {
+                                Lampa.Controller.toggle('head');
+                            } catch (eH) {}
                         }
+                    } else {
+                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var currIdx = lastFocusedCard ? allCards.index(lastFocusedCard) : -1;
+                        if (currIdx > 0) {
+                            var prevCard = allCards.eq(currIdx - 1)[0];
+                            if (prevCard) {
+                                lastFocusedCard = prevCard;
+                                lastFocused = prevCard;
+                                Lampa.Controller.collectionFocus(prevCard, scroll.render());
+                                try { scroll.update(prevCard, true); } catch (eU) {}
+                                return;
+                            }
+                        }
+                        inHeader = true;
+                        Lampa.Controller.collectionSet(html.find('.customs-ts-head__controls'));
+                        var targetHead = html.find('.customs-ts-head__controls .selector.active')[0] || html.find('.customs-ts-ctrl')[0];
+                        Lampa.Controller.collectionFocus(targetHead, html.find('.customs-ts-head__controls'));
                     }
                 },
                 down: function () {
                     if (inHeader) {
                         inHeader = false;
                         Lampa.Controller.collectionSet(scroll.render());
-                        var target = lastFocusedCard && $.contains(scroll.render()[0], lastFocusedCard) ? lastFocusedCard : scroll.render().find('.customs-ts-card.selector').eq(0)[0];
-                        if (target) Lampa.Controller.collectionFocus(target, scroll.render());
+                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var target = lastFocusedCard && $.contains(scroll.render()[0], lastFocusedCard) ? lastFocusedCard : allCards[0];
+                        if (target) {
+                            lastFocusedCard = target;
+                            lastFocused = target;
+                            Lampa.Controller.collectionFocus(target, scroll.render());
+                            try { scroll.update(target, true); } catch (eDn) {}
+                        }
                     } else {
-                        if (Navigator.canmove('down')) Navigator.move('down');
+                        var allCards = scroll.render().find('.customs-ts-card.selector');
+                        var currIdx = lastFocusedCard ? allCards.index(lastFocusedCard) : -1;
+                        if (currIdx >= 0 && currIdx < allCards.length - 1) {
+                            var nextCard = allCards.eq(currIdx + 1)[0];
+                            if (nextCard) {
+                                lastFocusedCard = nextCard;
+                                lastFocused = nextCard;
+                                Lampa.Controller.collectionFocus(nextCard, scroll.render());
+                                try { scroll.update(nextCard, true); } catch (eN) {}
+                                return;
+                            }
+                        }
+                        Navigator.move('down');
                     }
                 },
                 left: function () {
-                    if (Navigator.canmove('left')) Navigator.move('left');
+                    if (inHeader) {
+                        Navigator.move('left');
+                    } else {
+                        if (Navigator.canmove('left')) Navigator.move('left');
+                    }
                 },
                 right: function () {
-                    if (Navigator.canmove('right')) Navigator.move('right');
+                    if (inHeader) {
+                        Navigator.move('right');
+                    } else {
+                        if (Navigator.canmove('right')) Navigator.move('right');
+                    }
                 },
                 back: function () {
                     Lampa.Activity.backward();
@@ -3210,9 +3127,8 @@
 
         this.destroy = function () {
             isDestroyed = true;
-            isAutoTesting = false;
+            if (autoTimer) clearTimeout(autoTimer);
             if (focusTimer) clearTimeout(focusTimer);
-            if (autoTestTimer) clearTimeout(autoTestTimer);
             if (activeProbe && activeProbe.abort) activeProbe.abort();
             scroll.destroy();
             html.remove();
@@ -3232,19 +3148,21 @@
 
         for (var i = 0; i < displayItems.length; i++) {
             (function (item) {
+                var seedClass = 'customs-torrent-seeds';
+                if (item.seeds >= 10) seedClass += ' customs-seeds--high';
+                else if (item.seeds >= 3) seedClass += ' customs-seeds--med';
+                else seedClass += ' customs-seeds--low';
+
                 var card = $('<div class="customs-torrent-card selector">' +
                     '<div class="customs-torrent-card__title">' + escapeHtml(item.title) + '</div>' +
                     '<div class="customs-torrent-card__badges"></div>' +
                     '<div class="customs-torrent-card__foot">' +
                         '<div class="customs-torrent-card__meta">' +
                             '<span class="customs-torrent-tracker">' + escapeHtml(item.tracker) + '</span>' +
-                            '<span class="customs-torrent-seeds">S: ' + item.seeds + ' / L: ' + item.leech + '</span>' +
+                            '<span class="' + seedClass + '">▲ ' + item.seeds + ' · ▼ ' + item.leech + '</span>' +
                         '</div>' +
                         '<div class="customs-torrent-card__status">' +
-                            '<div class="customs-torrent-speed customs-speed--idle">' +
-                                '<span class="customs-speed-dot"></span>' +
-                                '<span class="customs-speed-text">⚡️ Перевірити</span>' +
-                            '</div>' +
+                            '<div class="customs-live-peers-badge" style="display:none;"></div>' +
                             '<span class="customs-torrent-size">' + item.sizeStr + '</span>' +
                         '</div>' +
                     '</div>' +
@@ -3266,31 +3184,28 @@
                     badgesBox.append('<span class="customs-torrent-tag customs-torrent-tag--ukr">🇺🇦 UKR</span>');
                 }
 
-                if (torrServerSpeedCache[item.magnet]) {
-                    updateCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
+                if (torrServerPeersCache[item.magnet]) {
+                    updateCardLivePeersBadge(card, torrServerPeersCache[item.magnet]);
                 }
 
                 card.on('hover:focus', function () {
                     last = this;
-                    scroll.update($(this), true);
+                    try { scroll.update(this, true); } catch (eUp) {}
 
                     if (focusTimer) clearTimeout(focusTimer);
-                    focusTimer = setTimeout(function () {
-                        if (torrServerSpeedCache[item.magnet]) {
-                            updateCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
-                        } else {
-                            var speedBadge = card.find('.customs-torrent-speed');
-                            speedBadge.removeClass('customs-speed--idle customs-speed--green customs-speed--yellow customs-speed--red').addClass('customs-speed--testing');
-                            speedBadge.find('.customs-speed-text').text('Тест бітрейту...');
-
-                            probeTorrServerSpeed(item, movie, isSeries, function (res) {
-                                if (res && res.speed > 0) {
-                                    torrServerSpeedCache[item.magnet] = res;
-                                }
-                                updateCardSpeedBadge(card, res);
-                            });
-                        }
-                    }, 700);
+                    if (torrServerPeersCache[item.magnet]) {
+                        updateCardLivePeersBadge($(this), torrServerPeersCache[item.magnet]);
+                    } else {
+                        var _rowCard = $(this);
+                        focusTimer = setTimeout(function () {
+                            if (!torrServerPeersCache[item.magnet]) {
+                                updateCardLivePeersBadge(_rowCard, { testing: true });
+                                probeTorrServerLivePeers(item, function (res) {
+                                    updateCardLivePeersBadge(_rowCard, res);
+                                });
+                            }
+                        }, 600);
+                    }
                 });
 
                 card.on('hover:enter', function () {
@@ -3406,6 +3321,7 @@
         };
 
         row.destroy = function () {
+            if (focusTimer) clearTimeout(focusTimer);
             scroll.destroy();
             html.remove();
             row.emit('destroy');
@@ -4077,7 +3993,10 @@
             '.customs-torrent-card__foot{display:flex;align-items:center;justify-content:space-between;margin-top:.8em;padding-top:.65em;border-top:1px solid rgba(255,255,255,.07);font-size:.82em;}',
             '.customs-torrent-card__meta{display:flex;align-items:center;gap:.5em;color:#8b949e;}',
             '.customs-torrent-tracker{text-transform:uppercase;padding:.12em .45em;border-radius:.35em;background:rgba(59,130,246,.15);color:#93c5fd;font-size:.85em;font-weight:700;}',
-            '.customs-torrent-seeds{font-weight:600;color:#c9d1d9;}',
+            '.customs-torrent-seeds{font-weight:700;padding:.15em .5em;border-radius:.35em;background:rgba(255,255,255,.08);color:#c9d1d9;}',
+            '.customs-torrent-seeds.customs-seeds--high{color:#4ade80 !important;background:rgba(74,222,128,.18) !important;border:1px solid rgba(74,222,128,.35) !important;}',
+            '.customs-torrent-seeds.customs-seeds--med{color:#fbbf24 !important;background:rgba(251,191,36,.18) !important;border:1px solid rgba(251,191,36,.35) !important;}',
+            '.customs-torrent-seeds.customs-seeds--low{color:#f87171 !important;background:rgba(248,113,113,.18) !important;border:1px solid rgba(248,113,113,.35) !important;}',
             '.customs-torrent-card__status{display:flex;align-items:center;gap:.6em;}',
             '.customs-torrent-size{padding:.2em .65em;border-radius:.4em;background:#ffffff;color:#000000;font-weight:800;font-size:.9em;letter-spacing:-.02em;}',
             '.customs-torrent-speed{display:inline-flex;align-items:center;gap:.4em;padding:.18em .55em;border-radius:.4em;font-weight:700;font-size:.82em;transition:all .2s ease;}',
@@ -4101,11 +4020,12 @@
             '.customs-torrent-more-sub{font-size:.85em;color:#8b949e;margin-top:.3em;}',
 
             /* Повноекранний екран Customs Torrents (2-колонковий Cinema Glass) */
-            '.customs-torrents-screen{position:fixed !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;background:#0c0f12 !important;color:#f3f4f6 !important;display:flex !important;flex-direction:row !important;font-family:sans-serif !important;z-index:9999 !important;box-sizing:border-box !important;overflow:hidden !important;}',
+            '.customs-torrents-screen{position:absolute !important;top:4.5em !important;left:0 !important;right:0 !important;bottom:0 !important;width:100% !important;height:calc(100vh - 4.5em) !important;background:#0c0f12 !important;color:#f3f4f6 !important;display:flex !important;flex-direction:row !important;font-family:sans-serif !important;z-index:5 !important;box-sizing:border-box !important;overflow:hidden !important;}',
 
             /* Ліва колонка: Інфо про фільм/серіал */
-            '.customs-ts-sidebar{width:26em !important;min-width:22em !important;max-width:28em !important;height:100vh !important;padding:2.2em 2em 3em !important;box-sizing:border-box !important;display:flex !important;flex-direction:column !important;gap:.75em !important;overflow-y:auto !important;border-right:1px solid rgba(255,255,255,.07) !important;background:rgba(14,18,22,.98) !important;flex-shrink:0 !important;}',
-            '.customs-ts-poster-wrap{width:100% !important;display:flex !important;justify-content:flex-start !important;margin-bottom:.4em !important;}',
+            '.customs-ts-sidebar{width:26em !important;min-width:22em !important;max-width:28em !important;height:100% !important;padding:1.4em 2em 3em !important;box-sizing:border-box !important;display:flex !important;flex-direction:column !important;gap:.7em !important;overflow-y:auto !important;border-right:1px solid rgba(255,255,255,.07) !important;background:rgba(14,18,22,.98) !important;flex-shrink:0 !important;}',
+            '.customs-ts-sidebar::-webkit-scrollbar{display:none !important;width:0 !important;}',
+            '.customs-ts-poster-wrap{width:100% !important;display:flex !important;justify-content:flex-start !important;margin-bottom:.3em !important;}',
             '.customs-ts-poster{width:13.5em !important;height:20em !important;border-radius:1em !important;object-fit:cover !important;box-shadow:0 10px 30px rgba(0,0,0,.6) !important;border:1px solid rgba(255,255,255,.12) !important;}',
             '.customs-ts-meta-line{display:flex !important;align-items:center !important;gap:.6em !important;font-size:.95em !important;color:#9ca3af !important;font-weight:600 !important;}',
             '.customs-ts-meta-sep{color:#4b5563 !important;font-size:.8em !important;}',
@@ -4114,11 +4034,11 @@
             '.customs-ts-age{font-size:.8em !important;font-weight:700 !important;color:#d1d5db !important;border:1px solid rgba(255,255,255,.2) !important;padding:.15em .5em !important;border-radius:.35em !important;background:rgba(255,255,255,.05) !important;}',
             '.customs-ts-title{font-size:1.55em !important;font-weight:800 !important;color:#ffffff !important;line-height:1.25 !important;margin-top:.2em !important;word-break:break-word !important;}',
             '.customs-ts-genres{font-size:.9em !important;color:#8b949e !important;line-height:1.4 !important;}',
-            '.customs-ts-descr{font-size:.86em !important;color:#6b7280 !important;line-height:1.5 !important;overflow:hidden !important;display:-webkit-box !important;-webkit-line-clamp:6 !important;-webkit-box-orient:vertical !important;margin-top:.4em !important;}',
+            '.customs-ts-descr{font-size:.86em !important;color:#6b7280 !important;line-height:1.5 !important;overflow:hidden !important;display:-webkit-box !important;-webkit-line-clamp:6 !important;-webkit-box-orient:vertical !important;margin-top:.3em !important;}',
 
             /* Права колонка: Керування та роздачі */
-            '.customs-ts-main{flex:1 1 auto !important;height:100vh !important;display:flex !important;flex-direction:column !important;overflow:hidden !important;position:relative !important;}',
-            '.customs-ts-head{padding:1.6em 2.2em 1.2em !important;border-bottom:1px solid rgba(255,255,255,.07) !important;background:rgba(12,15,18,.98) !important;display:flex !important;align-items:center !important;justify-content:space-between !important;gap:1em !important;flex-shrink:0 !important;}',
+            '.customs-ts-main{flex:1 1 auto !important;height:100% !important;display:flex !important;flex-direction:column !important;overflow:hidden !important;position:relative !important;}',
+            '.customs-ts-head{padding:1.2em 2.2em 1em !important;border-bottom:1px solid rgba(255,255,255,.07) !important;background:rgba(12,15,18,.98) !important;display:flex !important;align-items:center !important;justify-content:space-between !important;gap:1em !important;flex-shrink:0 !important;}',
             '.customs-ts-head__controls{display:flex !important;align-items:center !important;gap:.7em !important;flex-wrap:wrap !important;}',
             '.customs-ts-autotest-status{display:flex !important;align-items:center !important;gap:.5em !important;padding:.45em .9em !important;border-radius:.75em !important;background:rgba(255,255,255,.05) !important;border:1px solid rgba(255,255,255,.1) !important;font-size:.85em !important;color:#9ca3af !important;white-space:nowrap !important;margin-left:auto !important;}',
             '.customs-ts-autotest-val{color:#e5e7eb !important;font-weight:700 !important;}',
@@ -4128,9 +4048,10 @@
             '.customs-ts-ctrl.active{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#ffffff;font-weight:700;}',
             '.customs-ts-ctrl__label{color:#9ca3af;font-size:.9em;}',
             '.customs-ts-ctrl__val{color:#fff;font-weight:700;}',
-            '.customs-ts-body{flex:1 1 auto !important;position:relative !important;width:100% !important;height:calc(100vh - 5em) !important;min-height:20em !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
-            '.customs-ts-body .scroll{position:absolute !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100% !important;height:100% !important;max-height:none !important;overflow:hidden !important;display:block !important;}',
-            '.customs-ts-body .scroll__content{width:100% !important;padding:1.2em 2.2em 5em !important;box-sizing:border-box !important;}',
+            '.customs-ts-body{flex:1 1 auto !important;position:relative !important;width:100% !important;height:calc(100% - 4.5em) !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
+            '.customs-ts-body .scroll{width:100% !important;height:100% !important;overflow-y:auto !important;overflow-x:hidden !important;display:block !important;}',
+            '.customs-ts-body .scroll::-webkit-scrollbar{display:none !important;width:0 !important;}',
+            '.customs-ts-body .scroll__content{width:100% !important;padding:1.2em 2.2em 6em !important;box-sizing:border-box !important;}',
             '.customs-ts-body .scroll__body{width:100% !important;display:flex !important;flex-direction:column !important;gap:.8em !important;box-sizing:border-box !important;}',
             '.customs-ts-card{width:100% !important;box-sizing:border-box !important;flex-shrink:0 !important;margin-bottom:0 !important;background:#181c20;border:1px solid rgba(255,255,255,.08);border-radius:1.1em;padding:1.1em 1.3em;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:transform .18s ease, border-color .18s ease, background-color .18s ease;cursor:pointer;display:flex;flex-direction:column;gap:.6em;}',
             '.customs-ts-card.focus{background:#20262e;border-color:rgba(255,255,255,.45);box-shadow:0 0 0 .22em rgba(255,255,255,.9), 0 12px 30px rgba(0,0,0,.6);transform:scale(1.015);}',
@@ -4153,6 +4074,18 @@
             '.customs-ts-stat{display:flex;align-items:center;gap:.35em;color:#8b949e;}',
             '.customs-ts-stat__val{font-weight:700;padding:.15em .45em;border-radius:.35em;background:rgba(255,255,255,.08);color:#e5e7eb;}',
             '.customs-ts-stat__val--seeds{color:#ffffff;background:rgba(255,255,255,.14);}',
+            '.customs-ts-stat__val--seeds.customs-seeds--high{color:#4ade80 !important;background:rgba(74,222,128,.18) !important;border:1px solid rgba(74,222,128,.35) !important;}',
+            '.customs-ts-stat__val--seeds.customs-seeds--med{color:#fbbf24 !important;background:rgba(251,191,36,.18) !important;border:1px solid rgba(251,191,36,.35) !important;}',
+            '.customs-ts-stat__val--seeds.customs-seeds--low{color:#f87171 !important;background:rgba(248,113,113,.18) !important;border:1px solid rgba(248,113,113,.35) !important;}',
+            '.customs-live-peers-badge{display:inline-flex;align-items:center;gap:.35em;padding:.2em .6em;border-radius:.4em;font-size:.82em;font-weight:700;letter-spacing:.01em;transition:all .18s ease;white-space:nowrap;}',
+            '.customs-peer-dot{display:inline-block;width:.5em;height:.5em;border-radius:50%;background:currentColor;}',
+            '.customs-peer--testing{background:rgba(59,130,246,.18) !important;color:#60a5fa !important;border:1px solid rgba(59,130,246,.35) !important;}',
+            '.customs-peer--testing .customs-peer-dot{animation:customs-live-pulse 1.2s infinite ease-in-out;}',
+            '.customs-peer--live{background:rgba(74,222,128,.18) !important;color:#4ade80 !important;border:1px solid rgba(74,222,128,.35) !important;}',
+            '.customs-peer--live .customs-peer-dot{animation:customs-live-pulse 2s infinite ease-in-out;}',
+            '.customs-peer--few{background:rgba(251,191,36,.18) !important;color:#fbbf24 !important;border:1px solid rgba(251,191,36,.35) !important;}',
+            '.customs-peer--dead{background:rgba(248,113,113,.18) !important;color:#f87171 !important;border:1px solid rgba(248,113,113,.35) !important;}',
+            '.customs-peer--off{background:rgba(248,113,113,.22) !important;color:#fca5a5 !important;border:1px solid rgba(248,113,113,.45) !important;}',
             '.customs-ts-size{padding:.25em .7em;border-radius:.4em;background:#ffffff;color:#000000;font-weight:800;font-size:.92em;letter-spacing:-.02em;box-shadow:0 2px 6px rgba(0,0,0,.4);white-space:nowrap;}',
             '.customs-speed-badge{display:inline-flex;align-items:center;gap:.4em;padding:.22em .65em;border-radius:.45em;font-weight:700;font-size:.82em;border:1px solid transparent;transition:all .18s ease;white-space:nowrap;cursor:pointer;}',
             '.customs-subbadge{font-size:.82em;font-weight:500;opacity:.9;padding:.1em .35em;border-radius:.3em;background:rgba(0,0,0,.25);margin-left:.2em;}',
