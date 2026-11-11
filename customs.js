@@ -2,12 +2,13 @@
  * Lampa Customs (customs.js)
  * 1. Стрічка трейлерів: TMDB (UA, RU, EN) + YouTube резерв (відразу під обкладинкою).
  * 2. Filmix швидкий перегляд: доступні варіанти озвучки, якість (4K/1080p/720p), орієнтовний розмір файлу та прямий запуск.
+ * 3. Торренти (TorrServer): окрема кнопка у меню «Джерело», повноекранний список Cinema Glass, сортування за вагою ⬇️/⬆️, швидкі фільтри (4K/1080p/UKR), живий вимір швидкості TorrServer відносно бітрейту.
  * Сумісність з ES5 для телевізорів (Tizen, webOS, Android TV).
  */
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.4.0';
+    var PLUGIN_VERSION = '1.5.0';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     var COMPONENT_NAME = 'lampa_customs';
@@ -1978,6 +1979,7 @@
     // ---------- Модуль Торрентів (TorrServer Speed & Size) ----------
 
     var torrServerSpeedCache = {};
+    var cachedTorrentsForMovie = {};
 
     function getTorrServerUrl() {
         var custom = Lampa.Storage.get('customs_torrserver_url', '');
@@ -2271,56 +2273,174 @@
     }
 
     function probeTorrServerSpeed(item, movie, isSeries, callback) {
-        if (!item || !item.magnet) return callback(null);
+        if (!item || !item.magnet) {
+            if (callback) callback({ speed: 0, seeders: 0, reqSpeed: 1, ratio: 0, status: 'red', text: 'Немає посилання' });
+            return { abort: function () {} };
+        }
+
         var torrUrl = getTorrServerUrl();
+        var reqSpeed = calculateRequiredSpeed(item, movie, isSeries);
+        var isAborted = false;
+        var probeXhr = null;
+        var pollTimer = null;
+        var pollTimer2 = null;
+        var dropHash = null;
 
-        var net = new Lampa.Reguest();
-        net.timeout(5000);
+        // 1. Надсилаємо GET /stream/...&preload для запуску кешування
+        try {
+            probeXhr = new XMLHttpRequest();
+            var preloadUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&preload';
+            probeXhr.open('GET', preloadUrl, true);
+            probeXhr.timeout = 4500;
+            probeXhr.send();
+        } catch (ePreload) {}
 
-        var statUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&stat';
+        // Додатково надсилаємо POST /torrents action: add для нових TorrServer MatriX
+        try {
+            var addXhr = new XMLHttpRequest();
+            addXhr.open('POST', torrUrl + '/torrents', true);
+            addXhr.setRequestHeader('Content-Type', 'application/json');
+            addXhr.timeout = 2000;
+            addXhr.send(JSON.stringify({
+                action: 'add',
+                link: item.magnet,
+                title: 'probe_' + (item.title || 'customs').slice(0, 30),
+                save_to_db: false
+            }));
+        } catch (eAdd) {}
 
-        net.silent(statUrl, function (res) {
-            var speed = 0;
-            var seeders = 0;
-            if (res) {
-                speed = res.download_speed || 0;
-                seeders = res.connected_seeders || res.active_peers || 0;
+        function queryStat(onSuccess, onError) {
+            var statXhr = new XMLHttpRequest();
+            var statUrl = torrUrl + '/stream/fname?link=' + encodeURIComponent(item.magnet) + '&stat';
+            statXhr.open('GET', statUrl, true);
+            statXhr.timeout = 2500;
+            statXhr.onreadystatechange = function () {
+                if (statXhr.readyState === 4) {
+                    if (statXhr.status === 200) {
+                        try {
+                            var json = JSON.parse(statXhr.responseText);
+                            onSuccess(json);
+                        } catch (eParse) {
+                            onError(eParse);
+                        }
+                    } else {
+                        onError(new Error('HTTP ' + statXhr.status));
+                    }
+                }
+            };
+            statXhr.onerror = onError;
+            statXhr.ontimeout = onError;
+            statXhr.send();
+        }
+
+        function cleanupAndReturn(result) {
+            if (isAborted) return;
+            isAborted = true;
+
+            if (pollTimer) clearTimeout(pollTimer);
+            if (pollTimer2) clearTimeout(pollTimer2);
+
+            if (probeXhr) {
+                try { probeXhr.abort(); } catch (e) {}
             }
 
-            var reqSpeed = calculateRequiredSpeed(item, movie, isSeries);
-            var ratio = reqSpeed > 0 ? (speed / reqSpeed) : 1;
+            if (dropHash) {
+                try {
+                    var dropXhr = new XMLHttpRequest();
+                    dropXhr.open('POST', torrUrl + '/torrents', true);
+                    dropXhr.setRequestHeader('Content-Type', 'application/json');
+                    dropXhr.timeout = 1500;
+                    dropXhr.send(JSON.stringify({ action: 'drop', hash: dropHash }));
+                } catch (eDrop) {}
+            }
 
+            if (callback) callback(result);
+        }
+
+        function evaluateAndReturn(stat) {
+            var speed = (stat && stat.download_speed) || 0;
+            var seeders = (stat && (stat.connected_seeders || stat.active_peers)) || item.seeds || 0;
+            var bytesRead = (stat && (stat.bytes_read || stat.preloaded_bytes)) || 0;
+
+            if (speed === 0 && bytesRead > 0) {
+                speed = Math.round(bytesRead / 3.0);
+            }
+
+            var ratio = reqSpeed > 0 ? (speed / reqSpeed) : 1;
             var status = 'red';
-            if (ratio >= 1.3 && speed > 800 * 1024) {
+
+            if (ratio >= 1.2 && speed > 500 * 1024) {
                 status = 'green';
-            } else if (ratio >= 0.8 && speed > 300 * 1024) {
+            } else if (ratio >= 0.75 && speed > 200 * 1024) {
                 status = 'yellow';
             }
 
-            var result = {
+            cleanupAndReturn({
                 speed: speed,
                 seeders: seeders,
                 reqSpeed: reqSpeed,
                 ratio: ratio,
                 status: status
-            };
-
-            callback(result);
-        }, function () {
-            callback({
-                speed: 0,
-                seeders: item.seeds || 0,
-                reqSpeed: calculateRequiredSpeed(item, movie, isSeries),
-                ratio: 0,
-                status: 'red'
             });
-        });
+        }
+
+        // Опитуємо через 2.0 секунди для завершення рукостискання пірів
+        pollTimer = setTimeout(function () {
+            if (isAborted) return;
+            queryStat(function (res1) {
+                if (res1 && res1.hash) dropHash = res1.hash;
+                var sp1 = (res1 && res1.download_speed) || 0;
+
+                if (sp1 > 0) {
+                    evaluateAndReturn(res1);
+                } else {
+                    // Якщо піри ще розганяються, зачекаємо ще 1.4 секунди
+                    pollTimer2 = setTimeout(function () {
+                        if (isAborted) return;
+                        queryStat(function (res2) {
+                            if (res2 && res2.hash) dropHash = res2.hash;
+                            evaluateAndReturn(res2);
+                        }, function () {
+                            evaluateAndReturn(res1 || {});
+                        });
+                    }, 1400);
+                }
+            }, function () {
+                cleanupAndReturn({
+                    speed: 0,
+                    seeders: 0,
+                    reqSpeed: reqSpeed,
+                    ratio: 0,
+                    status: 'offline',
+                    text: '⚠️ TorrServer офлайн'
+                });
+            });
+        }, 2000);
+
+        return {
+            abort: function () {
+                isAborted = true;
+                if (pollTimer) clearTimeout(pollTimer);
+                if (pollTimer2) clearTimeout(pollTimer2);
+                if (probeXhr) {
+                    try { probeXhr.abort(); } catch (e) {}
+                }
+                if (dropHash) {
+                    try {
+                        var dropXhr = new XMLHttpRequest();
+                        dropXhr.open('POST', torrUrl + '/torrents', true);
+                        dropXhr.setRequestHeader('Content-Type', 'application/json');
+                        dropXhr.send(JSON.stringify({ action: 'drop', hash: dropHash }));
+                    } catch (eDrop) {}
+                }
+            }
+        };
     }
 
     function updateCardSpeedBadge(cardEl, res) {
         if (!cardEl || !cardEl.length || !res) return;
         var speedBadge = cardEl.find('.customs-torrent-speed');
-        speedBadge.removeClass('customs-speed--idle customs-speed--testing customs-speed--green customs-speed--yellow customs-speed--red');
+        speedBadge.removeClass('customs-speed--idle customs-speed--testing customs-speed--green customs-speed--yellow customs-speed--red customs-speed--offline');
 
         var speedText = '';
         var mbps = (res.speed / (1024 * 1024)).toFixed(1);
@@ -2332,12 +2452,17 @@
         } else if (res.status === 'yellow') {
             speedBadge.addClass('customs-speed--yellow');
             speedText = mbps + ' MB/s ⚠️ Впритул';
+        } else if (res.status === 'offline') {
+            speedBadge.addClass('customs-speed--offline');
+            speedText = '⚠️ TorrServer офлайн';
         } else {
             speedBadge.addClass('customs-speed--red');
             if (res.speed > 0) {
                 speedText = mbps + ' MB/s ✕ Замало';
+            } else if (res.seeders > 0) {
+                speedText = '0 MB/s (P: ' + res.seeders + ') ✕ Повільно';
             } else {
-                speedText = '0 MB/s ✕ Повільно';
+                speedText = '0 MB/s ✕ Немає роздачі';
             }
         }
 
@@ -2441,37 +2566,347 @@
         Lampa.Player.playlist(playlist);
     }
 
-    function openAllTorrentsModal(movie, isSeries, allItems) {
-        if (!allItems || !allItems.length) {
-            Lampa.Noty.show('Роздач не знайдено');
-            return;
+    function buildCinemaGlassCard(item, idx, movie, isSeries) {
+        var card = $('<div class="customs-ts-card selector" data-index="' + idx + '">' +
+            '<div class="customs-ts-card__title">' + escapeHtml(item.title) + '</div>' +
+            '<div class="customs-ts-card__badges"></div>' +
+            '<div class="customs-ts-card__footer">' +
+                '<div class="customs-ts-card__meta-left">' +
+                    '<span class="customs-ts-tag customs-ts-tag--tracker">' + escapeHtml(item.tracker) + '</span>' +
+                    (item.date ? '<span class="customs-ts-date">' + escapeHtml(item.date) + '</span>' : '') +
+                '</div>' +
+                '<div class="customs-ts-card__meta-right">' +
+                    '<div class="customs-ts-stat">' +
+                        '<span class="customs-ts-stat__label">Роздають:</span>' +
+                        '<span class="customs-ts-stat__val customs-ts-stat__val--seeds">' + item.seeds + '</span>' +
+                    '</div>' +
+                    '<div class="customs-ts-stat">' +
+                        '<span class="customs-ts-stat__label">Качають:</span>' +
+                        '<span class="customs-ts-stat__val">' + item.leech + '</span>' +
+                    '</div>' +
+                    '<div class="customs-speed-badge customs-speed--idle">' +
+                        '<span class="customs-speed-dot"></span>' +
+                        '<span class="customs-speed-text">⚡️ Перевірити</span>' +
+                    '</div>' +
+                    '<span class="customs-ts-size">' + item.sizeStr + '</span>' +
+                '</div>' +
+            '</div>' +
+        '</div>');
+
+        var badgesBox = card.find('.customs-ts-card__badges');
+        if (item.tags.season) {
+            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--season">' + escapeHtml(item.tags.season) + '</span>');
+        }
+        if (item.tags.quality) {
+            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--quality">' + escapeHtml(item.tags.quality) + '</span>');
+        }
+        if (item.tags.codecs && item.tags.codecs.length) {
+            for (var c = 0; c < item.tags.codecs.length; c++) {
+                badgesBox.append('<span class="customs-ts-tag customs-ts-tag--codec">' + escapeHtml(item.tags.codecs[c]) + '</span>');
+            }
+        }
+        if (item.tags.isUkr) {
+            badgesBox.append('<span class="customs-ts-tag customs-ts-tag--ukr">🇺🇦 UKR</span>');
         }
 
-        var selectItems = allItems.map(function (it, idx) {
-            var speedStr = '';
-            if (torrServerSpeedCache[it.magnet]) {
-                var sp = torrServerSpeedCache[it.magnet];
-                var mbps = (sp.speed / (1024 * 1024)).toFixed(1);
-                speedStr = ' • ⚡️ ' + mbps + ' MB/s (' + (sp.status === 'green' ? '✓' : (sp.status === 'yellow' ? '⚠️' : '✕')) + ')';
+        if (torrServerSpeedCache[item.magnet]) {
+            updateGlassCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
+        }
+
+        return card;
+    }
+
+    function updateGlassCardSpeedBadge(cardEl, res) {
+        if (!cardEl || !cardEl.length || !res) return;
+        var badge = cardEl.find('.customs-speed-badge');
+        badge.removeClass('customs-speed--idle customs-speed--testing customs-speed--green customs-speed--yellow customs-speed--red customs-speed--offline');
+
+        var speedText = '';
+        var mbps = (res.speed / (1024 * 1024)).toFixed(1);
+
+        if (res.status === 'green') {
+            badge.addClass('customs-speed--green');
+            var pct = Math.round(res.ratio * 100);
+            speedText = mbps + ' MB/s <span class="customs-subbadge">✓ Запас ' + pct + '%</span>';
+        } else if (res.status === 'yellow') {
+            badge.addClass('customs-speed--yellow');
+            speedText = mbps + ' MB/s <span class="customs-subbadge">⚠️ Впритул</span>';
+        } else if (res.status === 'offline') {
+            badge.addClass('customs-speed--offline');
+            speedText = '⚠️ TorrServer офлайн';
+        } else {
+            badge.addClass('customs-speed--red');
+            if (res.speed > 0) {
+                speedText = mbps + ' MB/s <span class="customs-subbadge">✕ Замало</span>';
+            } else if (res.seeders > 0) {
+                speedText = '0 MB/s (P: ' + res.seeders + ') <span class="customs-subbadge">✕ Повільно</span>';
+            } else {
+                speedText = '0 MB/s <span class="customs-subbadge">✕ Немає роздачі</span>';
+            }
+        }
+
+        badge.find('.customs-speed-text').html(speedText);
+    }
+
+    function setGlassCardTesting(cardEl) {
+        if (!cardEl || !cardEl.length) return;
+        var badge = cardEl.find('.customs-speed-badge');
+        badge.removeClass('customs-speed--idle customs-speed--green customs-speed--yellow customs-speed--red customs-speed--offline').addClass('customs-speed--testing');
+        badge.find('.customs-speed-text').html('Тест бітрейту...');
+    }
+
+    function openCustomsTorrentsScreen(movie, isSeries, initialList) {
+        if (!movie) return;
+        Lampa.Activity.push({
+            url: '',
+            title: '⚡️ Торренти — ' + (movie.title || movie.name || ''),
+            component: 'customs_torrents_screen',
+            movie: movie,
+            isSeries: Boolean(isSeries),
+            initialList: initialList || cachedTorrentsForMovie[movie.id] || null,
+            page: 1
+        });
+    }
+
+    function openAllTorrentsModal(movie, isSeries, allItems) {
+        openCustomsTorrentsScreen(movie, isSeries, allItems);
+    }
+
+    function CustomsTorrentsComponent(object) {
+        var _this = this;
+        var movie = object.movie || {};
+        var isSeries = Boolean(object.isSeries);
+        var scroll = new Lampa.Scroll({ over: true, mask: true, step: 250 });
+
+        var html = $('<div class="customs-torrents-screen">' +
+            '<div class="customs-ts-head">' +
+                '<div class="customs-ts-head__info">' +
+                    '<div class="customs-ts-head__badge">CUSTOMS TORRENTS</div>' +
+                    '<div class="customs-ts-head__title">' + escapeHtml(movie.title || movie.name || '') + '</div>' +
+                    '<div class="customs-ts-head__sub">' + escapeHtml(movie.original_title || movie.original_name || '') + (movie.release_date || movie.first_air_date ? ' • ' + (movie.release_date || movie.first_air_date).slice(0, 4) : '') + '</div>' +
+                '</div>' +
+                '<div class="customs-ts-head__controls">' +
+                    '<div class="customs-ts-ctrl selector customs-ts-sort" data-action="sort">' +
+                        '<span class="customs-ts-ctrl__label">Сортування:</span> ' +
+                        '<span class="customs-ts-sort-val">По розміру <span class="customs-sort-arrow">⬇️</span></span>' +
+                    '</div>' +
+                    '<div class="customs-ts-ctrl selector customs-ts-filter active" data-filter="all">Всі</div>' +
+                    '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="4k">4K UHD</div>' +
+                    '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="1080p">1080p FHD</div>' +
+                    '<div class="customs-ts-ctrl selector customs-ts-filter" data-filter="ukr">🇺🇦 Тільки UKR</div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="customs-ts-body"></div>' +
+        '</div>');
+
+        var body = html.find('.customs-ts-body');
+        var sortDesc = true;
+        var currentFilter = 'all';
+        var allItems = object.initialList || cachedTorrentsForMovie[movie.id] || [];
+        var lastFocused = null;
+        var lastFocusedCard = null;
+        var focusTimer = null;
+        var inHeader = false;
+        var activeProbe = null;
+
+        function renderSkeletons() {
+            scroll.clear();
+            for (var s = 0; s < 5; s++) {
+                var skel = $('<div class="customs-ts-card customs-ts-card--skel">' +
+                    '<div class="customs-ts-skel-line customs-ts-skel-title"></div>' +
+                    '<div class="customs-ts-skel-line customs-ts-skel-badges"></div>' +
+                    '<div class="customs-ts-skel-line customs-ts-skel-foot"></div>' +
+                '</div>');
+                scroll.append(skel[0]);
+            }
+        }
+
+        function setupHeaderControls() {
+            var headControls = html.find('.customs-ts-head__controls');
+
+            headControls.find('.customs-ts-sort').on('hover:enter', function () {
+                sortDesc = !sortDesc;
+                $(this).find('.customs-sort-arrow').text(sortDesc ? '⬇️' : '⬆️');
+                renderCards();
+            }).on('hover:focus', function () {
+                inHeader = true;
+                lastFocused = this;
+            });
+
+            headControls.find('.customs-ts-filter').on('hover:enter', function () {
+                headControls.find('.customs-ts-filter').removeClass('active');
+                $(this).addClass('active');
+                currentFilter = $(this).attr('data-filter') || 'all';
+                renderCards();
+            }).on('hover:focus', function () {
+                inHeader = true;
+                lastFocused = this;
+            });
+        }
+
+        function renderCards() {
+            scroll.clear();
+
+            var list = allItems.slice();
+
+            if (currentFilter === '4k') {
+                list = list.filter(function (it) {
+                    var q = (it.tags.quality || '') + ' ' + (it.title || '');
+                    return /4k|2160/i.test(q);
+                });
+            } else if (currentFilter === '1080p') {
+                list = list.filter(function (it) {
+                    var q = (it.tags.quality || '') + ' ' + (it.title || '');
+                    return /1080|fhd/i.test(q);
+                });
+            } else if (currentFilter === 'ukr') {
+                list = list.filter(function (it) {
+                    return it.tags.isUkr;
+                });
             }
 
-            return {
-                title: (it.tags.isUkr ? '🇺🇦 ' : '') + it.title,
-                subtitle: it.sizeStr + ' • S: ' + it.seeds + ' / L: ' + it.leech + ' • ' + it.tracker + speedStr,
-                torrent: it
-            };
-        });
+            list.sort(function (a, b) {
+                var szA = a.sizeBytes || 0;
+                var szB = b.sizeBytes || 0;
+                return sortDesc ? (szB - szA) : (szA - szB);
+            });
 
-        Lampa.Select.show({
-            title: 'Всі роздачі (' + allItems.length + ') — ' + (movie.title || movie.name || ''),
-            items: selectItems,
-            onSelect: function (sel) {
-                handleTorrentPlayback(sel.torrent, movie, isSeries);
-            },
-            onBack: function () {
-                Lampa.Controller.toggle(ROW_TORRENTS);
+            html.find('.customs-ts-filter[data-filter="all"]').text('Всі (' + allItems.length + ')');
+
+            if (!list.length) {
+                var empty = $('<div class="customs-ts-empty">' +
+                    '<div class="customs-ts-empty__icon">🔍</div>' +
+                    '<div class="customs-ts-empty__title">Роздач не знайдено</div>' +
+                    '<div class="customs-ts-empty__desc">Спробуйте змінити фільтр або перевірте налаштування парсера</div>' +
+                '</div>');
+                scroll.append(empty[0]);
+                return;
             }
-        });
+
+            for (var i = 0; i < list.length; i++) {
+                (function (item, idx) {
+                    var card = buildCinemaGlassCard(item, idx, movie, isSeries);
+
+                    card.on('hover:focus', function () {
+                        inHeader = false;
+                        lastFocused = this;
+                        lastFocusedCard = this;
+                        scroll.update($(this), true);
+
+                        if (focusTimer) clearTimeout(focusTimer);
+                        focusTimer = setTimeout(function () {
+                            if (torrServerSpeedCache[item.magnet]) {
+                                updateGlassCardSpeedBadge(card, torrServerSpeedCache[item.magnet]);
+                            } else {
+                                setGlassCardTesting(card);
+                                if (activeProbe && activeProbe.abort) activeProbe.abort();
+                                activeProbe = probeTorrServerSpeed(item, movie, isSeries, function (res) {
+                                    torrServerSpeedCache[item.magnet] = res;
+                                    updateGlassCardSpeedBadge(card, res);
+                                });
+                            }
+                        }, 500);
+                    });
+
+                    card.on('hover:enter', function () {
+                        handleTorrentPlayback(item, movie, isSeries);
+                    });
+
+                    scroll.append(card[0]);
+                })(list[i], i);
+            }
+
+            if (!inHeader) {
+                var first = scroll.render().find('.customs-ts-card.selector').eq(0)[0];
+                if (first) {
+                    lastFocusedCard = first;
+                    lastFocused = first;
+                    Lampa.Controller.collectionSet(scroll.render());
+                    Lampa.Controller.collectionFocus(first, scroll.render());
+                }
+            }
+        }
+
+        this.create = function () {
+            body.append(scroll.render(true));
+            setupHeaderControls();
+
+            if (allItems && allItems.length) {
+                renderCards();
+            } else {
+                renderSkeletons();
+                searchTorrents(movie, isSeries, function (list) {
+                    allItems = list || [];
+                    cachedTorrentsForMovie[movie.id] = allItems;
+                    renderCards();
+                });
+            }
+
+            return html;
+        };
+
+        this.render = function () {
+            return html;
+        };
+
+        this.start = function () {
+            Lampa.Controller.add('customs_torrents_screen', {
+                toggle: function () {
+                    if (inHeader) {
+                        Lampa.Controller.collectionSet(html.find('.customs-ts-head__controls'));
+                        Lampa.Controller.collectionFocus(lastFocused || html.find('.customs-ts-ctrl').eq(0)[0], html.find('.customs-ts-head__controls'));
+                    } else {
+                        Lampa.Controller.collectionSet(scroll.render());
+                        var target = lastFocusedCard || scroll.render().find('.customs-ts-card.selector').eq(0)[0];
+                        Lampa.Controller.collectionFocus(target, scroll.render());
+                    }
+                },
+                up: function () {
+                    if (inHeader) {
+                        // Already in header
+                    } else {
+                        if (Navigator.canmove('up')) {
+                            Navigator.move('up');
+                        } else {
+                            inHeader = true;
+                            Lampa.Controller.collectionSet(html.find('.customs-ts-head__controls'));
+                            var targetHead = html.find('.customs-ts-head__controls .selector.active')[0] || html.find('.customs-ts-ctrl')[0];
+                            Lampa.Controller.collectionFocus(targetHead, html.find('.customs-ts-head__controls'));
+                        }
+                    }
+                },
+                down: function () {
+                    if (inHeader) {
+                        inHeader = false;
+                        Lampa.Controller.collectionSet(scroll.render());
+                        var target = lastFocusedCard && $.contains(scroll.render()[0], lastFocusedCard) ? lastFocusedCard : scroll.render().find('.customs-ts-card.selector').eq(0)[0];
+                        if (target) Lampa.Controller.collectionFocus(target, scroll.render());
+                    } else {
+                        if (Navigator.canmove('down')) Navigator.move('down');
+                    }
+                },
+                left: function () {
+                    if (Navigator.canmove('left')) Navigator.move('left');
+                },
+                right: function () {
+                    if (Navigator.canmove('right')) Navigator.move('right');
+                },
+                back: function () {
+                    Lampa.Activity.backward();
+                }
+            });
+            Lampa.Controller.toggle('customs_torrents_screen');
+        };
+
+        this.pause = function () {};
+        this.stop = function () {};
+
+        this.destroy = function () {
+            if (focusTimer) clearTimeout(focusTimer);
+            if (activeProbe && activeProbe.abort) activeProbe.abort();
+            scroll.destroy();
+            html.remove();
+        };
     }
 
     function createTorrentsRow(items, movie, isSeries) {
@@ -3035,6 +3470,33 @@
         var page = e.body && e.body[0];
         var network = new Lampa.Reguest();
 
+        // 0. Кнопка у меню «Джерело» / панель дій картки (СИНХРОННО)
+        if (flag('customs_torrents_enabled', true)) {
+            try {
+                var cardRender = (e.object && e.object.activity && e.object.activity.render) ? e.object.activity.render() : $(page);
+                if (cardRender && cardRender.length && !cardRender.find('.view--customs-torrents').length) {
+                    var tBtn = $('<div class="full-start__button selector view--customs-torrents" data-subtitle="TorrServer Speed &amp; Size">' +
+                        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+                            '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>' +
+                        '</svg>' +
+                        '<span>⚡️ Торренти (Customs)</span>' +
+                    '</div>');
+
+                    tBtn.on('hover:enter', function () {
+                        openCustomsTorrentsScreen(movie, isSeries);
+                    });
+
+                    var nativeTorrent = cardRender.find('.view--torrent');
+                    if (nativeTorrent.length) {
+                        nativeTorrent.after(tBtn);
+                    } else {
+                        var btnBox = cardRender.find('.full-start-new__buttons, .full-start__buttons');
+                        if (btnBox.length) btnBox.append(tBtn);
+                    }
+                }
+            } catch (eBtn) {}
+        }
+
         // 1. Filmix: Вставляємо скелетон ВІДРАЗУ (або готові картки, якщо є в кеші)
         var filmixSkeleton = null;
         if (flag('customs_filmix_enabled', true)) {
@@ -3070,21 +3532,10 @@
 
             searchTorrents(movie, isSeries, function (list) {
                 if (!page || !document.body.contains(page)) return;
+                cachedTorrentsForMovie[movie.id] = list || [];
                 if (list && list.length) {
                     var realTorrentsRow = createTorrentsRow(list, movie, isSeries);
                     swapRow(e.link, torrentsSkeleton, realTorrentsRow, ROW_TORRENTS);
-
-                    try {
-                        var cardRender = (e.object && e.object.activity && e.object.activity.render) ? e.object.activity.render() : $(page);
-                        var btnBox = cardRender.find('.full-start-new__buttons, .full-start__buttons');
-                        if (btnBox.length && !btnBox.find('.view--customs-torrents').length) {
-                            var tBtn = $('<div class="full-start__button selector view--customs-torrents"><span>⚡️ Торренти</span></div>');
-                            tBtn.on('hover:enter', function () {
-                                openAllTorrentsModal(movie, isSeries, list);
-                            });
-                            btnBox.append(tBtn);
-                        }
-                    } catch (err) {}
                 } else {
                     removeRow(e.link, torrentsSkeleton, ROW_TORRENTS);
                 }
@@ -3298,7 +3749,8 @@
             '.customs-filmix-split-left .customs-filmix-item__ep-badge{position:absolute;bottom:.5em;left:.5em;background:rgba(10,15,25,0.85);border:1px solid rgba(255,255,255,0.25);color:#fff;z-index:2;}',
             '.customs-filmix-split-right{flex:1;min-width:0;padding:.75em .85em;display:flex;flex-direction:column;justify-content:space-between;}',
 
-            /* Торренти TorrServer */
+            /* Торренти TorrServer & Кнопка в Джерело */
+            '.full-start__button.view--customs-torrents svg{width:1.3em;height:1.3em;stroke:currentColor;fill:none;margin-right:.4em;vertical-align:middle;}',
             '.customs-torrents .scroll__body{display:flex;}',
             '.customs-torrents .scroll__content{padding-top:.5em;padding-bottom:.8em;}',
             '.customs-torrent-card{position:relative;flex-shrink:0;width:21em;min-height:9.5em;margin-right:1.3em;padding:1em 1.2em;border-radius:1.1em;background:#16191d;border:1px solid rgba(255,255,255,.09);box-shadow:0 8px 24px rgba(0,0,0,.35);display:flex;flex-direction:column;justify-content:space-between;transition:transform .2s ease, border-color .2s ease, background-color .2s ease;}',
@@ -3323,18 +3775,63 @@
             '.customs-speed--green{background:rgba(16,185,129,.2);color:#34d399;border:1px solid rgba(16,185,129,.4);}',
             '.customs-speed--yellow{background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.4);}',
             '.customs-speed--red{background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.35);}',
+            '.customs-speed--offline{background:rgba(239,68,68,.25);color:#fca5a5;border:1px solid rgba(239,68,68,.5);}',
             '.customs-torrent-skeleton{flex-shrink:0;width:21em;min-height:9.5em;margin-right:1.3em;padding:1em 1.2em;border-radius:1.1em;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05);display:flex;flex-direction:column;justify-content:space-between;animation:customs-pulse 2.2s ease-in-out infinite;}',
             '.customs-torrent-skeleton__title{height:1.2em;width:85%;border-radius:.4em;background:rgba(255,255,255,.08);}',
             '.customs-torrent-skeleton__badges{height:1em;width:50%;border-radius:.3em;background:rgba(255,255,255,.06);margin-top:.6em;}',
             '.customs-torrent-skeleton__foot{display:flex;justify-content:space-between;align-items:center;margin-top:.8em;}',
             '.customs-torrent-skeleton__meta{height:1em;width:40%;border-radius:.3em;background:rgba(255,255,255,.06);}',
             '.customs-torrent-skeleton__size{height:1.2em;width:25%;border-radius:.4em;background:rgba(255,255,255,.08);}',
-
             '.customs-torrent-card--more{justify-content:center;align-items:center;text-align:center;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.25);cursor:pointer;}',
             '.customs-torrent-card--more.focus{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.8);}',
             '.customs-torrent-more-icon{font-size:2em;margin-bottom:.2em;}',
             '.customs-torrent-more-title{font-size:1.1em;font-weight:700;color:#fff;}',
             '.customs-torrent-more-sub{font-size:.85em;color:#8b949e;margin-top:.3em;}',
+
+            /* Повноекранний екран Customs Torrents (Cinema Glass) */
+            '.customs-torrents-screen{position:absolute;top:0;left:0;width:100%;height:100%;background:#0e1114;color:#f3f4f6;display:flex;flex-direction:column;font-family:sans-serif;z-index:10;box-sizing:border-box;}',
+            '.customs-ts-head{padding:1.6em 2.5em 1.2em;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(14,17,20,.95);display:flex;flex-direction:column;gap:1em;flex-shrink:0;}',
+            '.customs-ts-head__info{display:flex;flex-direction:column;gap:.3em;}',
+            '.customs-ts-head__badge{display:inline-block;padding:.2em .6em;border-radius:.4em;background:rgba(16,185,129,.2);color:#34d399;font-weight:800;font-size:.75em;letter-spacing:.05em;border:1px solid rgba(16,185,129,.35);align-self:flex-start;}',
+            '.customs-ts-head__title{font-size:1.8em;font-weight:700;color:#ffffff;line-height:1.2;}',
+            '.customs-ts-head__sub{font-size:.9em;color:#9ca3af;}',
+            '.customs-ts-head__controls{display:flex;align-items:center;gap:.7em;flex-wrap:wrap;}',
+            '.customs-ts-ctrl{padding:.5em 1em;border-radius:.75em;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#d1d5db;font-size:.88em;font-weight:600;cursor:pointer;transition:all .18s ease;display:flex;align-items:center;gap:.4em;}',
+            '.customs-ts-ctrl.focus{background:rgba(255,255,255,.22);border-color:rgba(255,255,255,.5);color:#fff;box-shadow:0 0 0 .2em rgba(255,255,255,.8);transform:scale(1.03);}',
+            '.customs-ts-ctrl.active{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#ffffff;font-weight:700;}',
+            '.customs-ts-ctrl__label{color:#9ca3af;font-size:.9em;}',
+            '.customs-ts-ctrl__val{color:#fff;font-weight:700;}',
+            '.customs-ts-body{flex:1;position:relative;overflow:hidden;padding:1.2em 2.5em 2.5em;}',
+            '.customs-ts-card{background:#181c20;border:1px solid rgba(255,255,255,.08);border-radius:1.1em;padding:1.1em 1.3em;margin-bottom:.9em;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:transform .18s ease, border-color .18s ease, background-color .18s ease;cursor:pointer;display:flex;flex-direction:column;gap:.6em;}',
+            '.customs-ts-card.focus{background:#20262e;border-color:rgba(255,255,255,.45);box-shadow:0 0 0 .22em rgba(255,255,255,.9), 0 12px 30px rgba(0,0,0,.6);transform:scale(1.015);}',
+            '.customs-ts-card__title{font-size:1.05em;font-weight:600;color:#f3f4f6;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}',
+            '.customs-ts-card__badges{display:flex;align-items:center;flex-wrap:wrap;gap:.45em;}',
+            '.customs-ts-tag{display:inline-block;padding:.2em .6em;border-radius:.4em;font-size:.78em;font-weight:600;line-height:1.2;letter-spacing:.02em;}',
+            '.customs-ts-tag--season{background:rgba(255,255,255,.16);color:#ffffff;font-weight:700;}',
+            '.customs-ts-tag--quality{border:1px solid rgba(255,255,255,.3);color:#e5e7eb;font-weight:600;}',
+            '.customs-ts-tag--codec{background:rgba(255,255,255,.06);color:#9ca3af;}',
+            '.customs-ts-tag--ukr{background:rgba(245,158,11,.18);color:#fbbf24;border:1px solid rgba(245,158,11,.35);font-weight:700;}',
+            '.customs-ts-tag--tracker{text-transform:uppercase;padding:.15em .5em;border-radius:.35em;background:rgba(59,130,246,.15);color:#93c5fd;font-size:.85em;font-weight:700;border:1px solid rgba(59,130,246,.25);}',
+            '.customs-ts-card__footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.8em;margin-top:.4em;padding-top:.7em;border-top:1px solid rgba(255,255,255,.06);font-size:.84em;}',
+            '.customs-ts-card__meta-left{display:flex;align-items:center;gap:.6em;color:#8b949e;}',
+            '.customs-ts-card__meta-right{display:flex;align-items:center;gap:.9em;margin-left:auto;}',
+            '.customs-ts-stat{display:flex;align-items:center;gap:.35em;color:#8b949e;}',
+            '.customs-ts-stat__val{font-weight:700;padding:.15em .45em;border-radius:.35em;background:rgba(255,255,255,.08);color:#e5e7eb;}',
+            '.customs-ts-stat__val--seeds{color:#ffffff;background:rgba(255,255,255,.14);}',
+            '.customs-ts-size{padding:.25em .7em;border-radius:.4em;background:#ffffff;color:#000000;font-weight:800;font-size:.92em;letter-spacing:-.02em;box-shadow:0 2px 6px rgba(0,0,0,.4);white-space:nowrap;}',
+            '.customs-speed-badge{display:inline-flex;align-items:center;gap:.4em;padding:.22em .65em;border-radius:.45em;font-weight:700;font-size:.82em;border:1px solid transparent;transition:all .18s ease;white-space:nowrap;cursor:pointer;}',
+            '.customs-subbadge{font-size:.82em;font-weight:500;opacity:.9;padding:.1em .35em;border-radius:.3em;background:rgba(0,0,0,.25);margin-left:.2em;}',
+            '@keyframes customs-live-pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(1.2);}}',
+            '.customs-speed--green .customs-speed-dot{animation:customs-live-pulse 1.8s infinite ease-in-out;}',
+            '.customs-ts-card--skel{min-height:7em;background:rgba(255,255,255,.03);animation:customs-pulse 2.2s infinite ease-in-out;}',
+            '.customs-ts-skel-line{border-radius:.35em;background:rgba(255,255,255,.06);}',
+            '.customs-ts-skel-title{height:1.2em;width:75%;}',
+            '.customs-ts-skel-badges{height:1em;width:40%;margin-top:.5em;}',
+            '.customs-ts-skel-foot{height:1.1em;width:60%;margin-top:.8em;}',
+            '.customs-ts-empty{padding:4em 2em;text-align:center;color:#9ca3af;}',
+            '.customs-ts-empty__icon{font-size:3em;margin-bottom:.4em;}',
+            '.customs-ts-empty__title{font-size:1.3em;font-weight:700;color:#fff;}',
+            '.customs-ts-empty__desc{font-size:.9em;margin-top:.4em;color:#6b7280;}',
 
             '.items-line.customs-strip-hidden{display:none !important;}'
         ].join('\n');
@@ -3435,6 +3932,9 @@
         addSettings();
         registerManifestAndName();
         initMainStripsHook();
+        if (Lampa.Component && Lampa.Component.add) {
+            Lampa.Component.add('customs_torrents_screen', CustomsTorrentsComponent);
+        }
         Lampa.Listener.follow('full', onFull);
     }
 
