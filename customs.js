@@ -8,8 +8,8 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.5.8';
-    var PLUGIN_BUILD = '11.11 17:50';
+    var PLUGIN_VERSION = '1.5.9';
+    var PLUGIN_BUILD = '11.11 18:15';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     // Вбудований активатор можливостей TorrServer (аналог etor / cub.rip/plugin/etor)
@@ -2527,36 +2527,40 @@
 
     function updateCardLivePeersBadge(cardEl, res) {
         if (!cardEl || !cardEl.length) return;
-        var badge = cardEl.find('.customs-live-peers-badge');
-        if (!badge.length) return;
+        var item = cardEl.data('item') || {};
+        var trackerSeeds = item.seeds || 0;
 
-        badge.removeClass('customs-peer--testing customs-peer--live customs-peer--few customs-peer--dead customs-peer--off');
+        // 1. Оновлення для горизонтальної смужки (.customs-torrent-card)
+        var rowSeedsEl = cardEl.find('.customs-torrent-seeds');
+        // 2. Оновлення для повноекранного режиму Cinema Glass (.customs-ts-stat__val--seeds)
+        var glassSeedsEl = cardEl.find('.customs-ts-stat__val--seeds');
 
-        if (!res) {
-            badge.hide().empty();
-            return;
-        }
+        var targetEl = rowSeedsEl.length ? rowSeedsEl : glassSeedsEl;
+        if (!targetEl.length) return;
 
-        badge.show();
+        targetEl.removeClass('customs-seeds--high customs-seeds--med customs-seeds--low customs-peer--testing');
+
+        if (!res) return;
 
         if (res.testing) {
-            badge.addClass('customs-peer--testing');
-            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">Тест пірів...</span>');
+            targetEl.addClass('customs-peer--testing');
+            targetEl.html('<span class="customs-peer-dot"></span> ⚡️ Перевірка...');
             return;
         }
 
         if (res.status === 'live') {
-            badge.addClass('customs-peer--live');
-            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">● ' + res.livePeers + ' онлайн</span>');
+            targetEl.addClass('customs-seeds--high');
+            targetEl.html('<span class="customs-peer-dot"></span> ● ' + res.livePeers + ' онлайн');
         } else if (res.status === 'few') {
-            badge.addClass('customs-peer--few');
-            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">● ' + res.livePeers + ' онлайн</span>');
+            targetEl.addClass('customs-seeds--med');
+            var txt = trackerSeeds > res.livePeers ? ('● ' + res.livePeers + ' з ' + trackerSeeds + ' онлайн') : ('● ' + res.livePeers + ' онлайн');
+            targetEl.html('<span class="customs-peer-dot"></span> ' + txt);
         } else if (res.status === 'dead') {
-            badge.addClass('customs-peer--dead');
-            badge.html('<span class="customs-peer-dot"></span><span class="customs-peer-txt">● 0 пірів (офлайн)</span>');
+            targetEl.addClass('customs-seeds--low');
+            targetEl.html('<span class="customs-peer-dot"></span> ● 0 пірів (офлайн)');
         } else if (res.status === 'off') {
-            badge.addClass('customs-peer--off');
-            badge.html('<span class="customs-peer-txt">⚠️ TorrServer офлайн</span>');
+            targetEl.addClass('customs-seeds--low');
+            targetEl.text('⚠️ TorrServer офлайн');
         }
     }
 
@@ -2645,7 +2649,6 @@
                     (item.date ? '<span class="customs-ts-date">' + escapeHtml(item.date) + '</span>' : '') +
                 '</div>' +
                 '<div class="customs-ts-card__meta-right">' +
-                    '<div class="customs-live-peers-badge" style="display:none;"></div>' +
                     '<div class="customs-ts-stat">' +
                         '<span class="customs-ts-stat__label">Роздають:</span>' +
                         '<span class="' + seedClass + '">▲ ' + item.seeds + '</span>' +
@@ -3162,11 +3165,13 @@
                             '<span class="' + seedClass + '">▲ ' + item.seeds + ' · ▼ ' + item.leech + '</span>' +
                         '</div>' +
                         '<div class="customs-torrent-card__status">' +
-                            '<div class="customs-live-peers-badge" style="display:none;"></div>' +
                             '<span class="customs-torrent-size">' + item.sizeStr + '</span>' +
                         '</div>' +
                     '</div>' +
                 '</div>');
+
+                card.data('item', item);
+                card.data('magnet', item.magnet);
 
                 var badgesBox = card.find('.customs-torrent-card__badges');
                 if (item.tags.season) {
@@ -3262,7 +3267,6 @@
         };
 
         row.destroy = function () {
-            if (focusTimer) clearTimeout(focusTimer);
             scroll.destroy();
             html.remove();
             row.emit('destroy');
@@ -3321,7 +3325,6 @@
         };
 
         row.destroy = function () {
-            if (focusTimer) clearTimeout(focusTimer);
             scroll.destroy();
             html.remove();
             row.emit('destroy');
