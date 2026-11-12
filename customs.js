@@ -8,8 +8,8 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.6.0';
-    var PLUGIN_BUILD = '11.11 19:25';
+    var PLUGIN_VERSION = '1.6.1';
+    var PLUGIN_BUILD = '11.11 23:30';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     // Вбудований активатор можливостей TorrServer (аналог etor / cub.rip/plugin/etor)
@@ -2187,7 +2187,8 @@
     }
 
     function extractTorrentTags(title) {
-        var str = (title || '').toLowerCase();
+        var raw = title || '';
+        var str = raw.toLowerCase();
         var tags = {
             season: '',
             episodes: '',
@@ -2197,31 +2198,60 @@
             isUkr: false
         };
 
-        if (/[іїєґ]|(?:\b|_)(?:ua|ukr|ukrainian)(?:\b|_)|укр|україн|\+ua/i.test(title)) {
+        if (/[іїєґ]|(?:\b|_)(?:ua|ukr|ukrainian)(?:\b|_)|укр|україн|\+ua/i.test(raw)) {
             tags.isUkr = true;
         }
 
-        var sMatch = title.match(/s(\d{1,2})-(\d{1,2})/i) || title.match(/сезон[и]?\s*(\d{1,2})-(\d{1,2})/i);
-        if (sMatch) {
-            tags.season = 'S' + parseInt(sMatch[1], 10) + '-' + parseInt(sMatch[2], 10);
+        // 1. Сезони (діапазон чи одиночний)
+        var sRange = raw.match(/(\d{1,2})\s*[\-\–—]\s*(\d{1,2})\s*сезон[иыа]?/i) ||
+                     raw.match(/сезон[иы]\s*[:\-\s]?\s*(\d{1,2})\s*[\-\–—]\s*(\d{1,2})(?!\s*(?:сер|ep|из|з))/i) ||
+                     raw.match(/\bs(\d{1,2})\s*[\-\–—]\s*s?(\d{1,2})\b/i) ||
+                     raw.match(/\[(\d{1,2})\s*[\-\–—]\s*(\d{1,2})x/i);
+
+        if (sRange) {
+            tags.season = 'Сезони ' + parseInt(sRange[1], 10) + '-' + parseInt(sRange[2], 10);
         } else {
-            var sSingle = title.match(/s(\d{1,2})/i) || title.match(/сезон\s*(\d{1,2})/i);
+            var sSingle = raw.match(/(\d{1,2})(?:-й|-ий|-ый|-ой)?\s*сезон/i) ||
+                          raw.match(/сезон\s*[:\-\s]?\s*(\d{1,2})(?!\s*[\-\–—]\s*\d+\s*(?:сер|ep|из|з))/i) ||
+                          raw.match(/\bs(\d{1,2})(?:e\d{1,2}|\b)/i) ||
+                          raw.match(/\[?(\d{1,2})x\d{1,2}/i);
             if (sSingle) {
-                tags.season = 'S' + parseInt(sSingle[1], 10);
+                tags.season = 'Сезон ' + parseInt(sSingle[1], 10);
             }
         }
 
-        var epMatch = title.match(/(?:серии|серії|episodes|ep)\s*(\d{1,2})-(\d{1,2})/i) || title.match(/(\d{1,2})-(\d{1,2})\s*(?:сер|ep)/i);
-        if (epMatch) {
-            tags.episodes = epMatch[1] + '-' + epMatch[2];
+        // 2. Серії (діапазон з кількості або одиночні)
+        var epOf = raw.match(/(\d{1,2})\s*[\-\–—]\s*(\d{1,2})\s*(?:сері[їяй]|сери[ияй]|episodes?|ep\.?)\s*(?:із|из|з)\s*(\d{1,2})/i) ||
+                   raw.match(/(?:сері[їяй]|сери[ияй]|episodes?|ep\.?)\s*[:\-\s]?\s*(\d{1,2})\s*[\-\–—]\s*(\d{1,2})\s*(?:із|из|з)\s*(\d{1,2})/i) ||
+                   raw.match(/\[?\d{1,2}x(\d{1,2})\s*[\-\–—]\s*(\d{1,2})\s*(?:із|из|з)\s*(\d{1,2})/i);
+        if (epOf) {
+            tags.episodes = parseInt(epOf[1], 10) + '-' + parseInt(epOf[2], 10) + ' з ' + parseInt(epOf[3], 10);
         } else {
-            var epOf = title.match(/(\d{1,2})\s*(?:из|з)\s*(\d{1,2})/i);
-            if (epOf) {
-                tags.episodes = '1-' + epOf[1];
+            var epRange = raw.match(/(?:сері[їяй]|сери[ияй]|episodes?|ep\.?)\s*[:\-\s]?\s*(\d{1,2})\s*[\-\–—]\s*(\d{1,2})/i) ||
+                          raw.match(/(\d{1,2})\s*[\-\–—]\s*(\d{1,2})\s*(?:сері[їяй]|сери[ияй]|episodes?|ep\.?)/i) ||
+                          raw.match(/(?:e|ep\.?|сер(?:і[їя]|и[ия])[:\s]?)\s*(\d{1,2})\s*[\-\–—]\s*(?:e|ep\.?)?(\d{1,2})/i) ||
+                          raw.match(/\[?\d{1,2}x(\d{1,2})\s*[\-\–—]\s*(\d{1,2})/i);
+            if (epRange) {
+                tags.episodes = parseInt(epRange[1], 10) + '-' + parseInt(epRange[2], 10) + ' серії';
+            } else {
+                var epOfSingle = raw.match(/(\d{1,2})\s*(?:із|из|з)\s*(\d{1,2})\s*(?:сері[їяй]|сери[ияй])?/i);
+                if (epOfSingle && parseInt(epOfSingle[1], 10) <= parseInt(epOfSingle[2], 10)) {
+                    tags.episodes = '1-' + parseInt(epOfSingle[1], 10) + ' з ' + parseInt(epOfSingle[2], 10);
+                } else {
+                    var epOne = raw.match(/(?:e|ep\.?|сер(?:ія|ію|ей)|сери(?:я|ю))\s*[:\-\s]?\s*(\d{1,2})\b/i) ||
+                                raw.match(/\b(\d{1,2})\s*(?:серія|серію|серия|серию)\b/i);
+                    if (epOne) {
+                        tags.episodes = parseInt(epOne[1], 10) + ' серія';
+                    }
+                }
             }
         }
 
-        var voiceMatch = title.match(/(?:\[|\(|\s)(AlexFilm|LostFilm|HDRezka|Кубик в кубе|Цікава Ідея|DniproFilm|BaibaKo|NewStudio|Jaskier|TVShows|UaTeam|В одне рило|НеЗупиняйПродакшн|Студія Омікрон|HD-Rezka|LineStar|ColdFilm|Octopus)(?:\]|\)|\s|$)/i);
+        if (!tags.episodes && /complete|повний\s*сезон|всі\s*серії|все\s*серии/i.test(raw)) {
+            tags.episodes = 'Всі серії';
+        }
+
+        var voiceMatch = raw.match(/(?:\[|\(|\s)(AlexFilm|LostFilm|HDRezka|Кубик в кубе|Цікава Ідея|DniproFilm|BaibaKo|NewStudio|Jaskier|TVShows|UaTeam|В одне рило|НеЗупиняйПродакшн|Студія Омікрон|HD-Rezka|LineStar|ColdFilm|Octopus|Tretyakoff|Tak Treba Production|LeDoyen|Postmodern|CinemaUkr)(?:\]|\)|\s|$)/i);
         if (voiceMatch) {
             tags.voice = voiceMatch[1];
         }
@@ -2658,10 +2688,32 @@
         var title = item.title || '';
         var tags = item.tags || {};
 
-        if (tags.voice) {
-            if (tags.season) {
-                return tags.season + (tags.episodes ? ' (' + tags.episodes + ')' : '') + ' • ' + tags.voice;
+        var rVoiceShort = /(?:^|\s|,|\/)(?:дб|пм|vo|mvo|dvo|dub|ст|sub)(?:$|\s|,|\/|\.)/i;
+        var rVoiceWord = /дубл|озвуч|переклад|голос|автор|титр|line|звук|itunes|cinemaukr/i;
+
+        // Для серіалів пріоритетно виводимо сезон і серії
+        if (tags.season) {
+            var sPrefix = tags.season + (tags.episodes ? ' (' + tags.episodes + ')' : '');
+            if (tags.voice) {
+                return sPrefix + ' • ' + tags.voice;
             }
+            if (title.indexOf('/') !== -1) {
+                var partsS = title.split('/');
+                for (var ps = 0; ps < partsS.length; ps++) {
+                    var partS = partsS[ps].trim();
+                    if (!partS) continue;
+                    if (/^(19|20)\d{2}$/.test(partS)) continue;
+                    if (/^(?:4k|2160p|1080p|1080i|720p|sd|hevc|avc|x264|x265|h\.?264|h\.?265|web-?dl|bdrip|remux|hdr|dv|sdr|dovi)[,\s\/\-]*$/i.test(partS)) continue;
+                    if (/сезон|season|сер|ep/i.test(partS)) continue;
+                    if (rVoiceShort.test(partS) || rVoiceWord.test(partS)) {
+                        return sPrefix + ' • ' + partS;
+                    }
+                }
+            }
+            return sPrefix;
+        }
+
+        if (tags.voice) {
             return tags.voice;
         }
 
@@ -2672,20 +2724,10 @@
                 if (!part) continue;
                 if (/^(19|20)\d{2}$/.test(part)) continue;
                 if (/^(?:4k|2160p|1080p|1080i|720p|sd|hevc|avc|x264|x265|h\.?264|h\.?265|web-?dl|bdrip|remux|hdr|dv|sdr|dovi)[,\s\/\-]*$/i.test(part)) continue;
-                if (/дб|пм|vo|mvo|dvo|dub|дубл|озвуч|переклад|голос|автор|ст|sub|титры|титри|line|звук|itunes|cinemaukr/i.test(part)) {
+                if (rVoiceShort.test(part) || rVoiceWord.test(part)) {
                     return part;
                 }
             }
-            for (var s = 0; s < parts.length; s++) {
-                var sPart = parts[s].trim();
-                if (/сезон|season|сер|ep/i.test(sPart)) {
-                    return sPart;
-                }
-            }
-        }
-
-        if (tags.season) {
-            return tags.season + (tags.episodes ? ' (' + tags.episodes + ')' : '');
         }
 
         if (title.indexOf('/') !== -1) {
@@ -2703,7 +2745,7 @@
 
         if (tags.season) {
             var sTxt = tags.season + (tags.episodes ? ' • ' + tags.episodes : '');
-            pills.push('<span class="customs-filmix-tag tag--edition">' + escapeHtml(sTxt) + '</span>');
+            pills.push('<span class="customs-filmix-tag tag--season">' + escapeHtml(sTxt) + '</span>');
         }
 
         if (title.indexOf('hevc') !== -1 || title.indexOf('h.265') !== -1 || title.indexOf('x265') !== -1) {
@@ -2937,6 +2979,52 @@
             });
         }
 
+        function updateScrollTo(targetElem) {
+            if (!targetElem) return;
+            var el = targetElem instanceof jQuery ? targetElem[0] : targetElem;
+            if (!el) return;
+
+            // 1. Стандартний Lampa scroll.update
+            try {
+                if (scroll && scroll.update) {
+                    scroll.update(el, true);
+                }
+            } catch (eSc) {}
+
+            // 2. Резервний точний розрахунок зсуву для WebKit / Android / Tizen / webOS
+            try {
+                var sBody = scroll && scroll.body ? scroll.body(true) : null;
+                var sHtml = scroll && scroll.render ? scroll.render(true) : null;
+                if (sBody && sHtml) {
+                    var boxRect = sHtml.getBoundingClientRect();
+                    var elRect = el.getBoundingClientRect();
+                    var targetCenter = boxRect.top + (boxRect.height / 2);
+                    var elCenter = elRect.top + (elRect.height / 2);
+                    var delta = targetCenter - elCenter;
+
+                    var curTransform = sBody.style['-webkit-transform'] || sBody.style['transform'] || '';
+                    var match = curTransform.match(/translate3d\([^,]+,\s*([\-\d\.]+)px/i);
+                    var currentY = match ? parseFloat(match[1]) : 0;
+
+                    var totalH = sBody.scrollHeight;
+                    var viewH = sHtml.offsetHeight;
+                    var maxScroll = Math.max(0, totalH - viewH + 80);
+
+                    // Якщо нативний getElementPosition повернув 0 або елемент виходить за межі видимості
+                    if (Math.abs(delta) > 30 && (elRect.bottom > boxRect.bottom - 20 || elRect.top < boxRect.top + 20)) {
+                        var newY = currentY + delta;
+                        if (newY > 0) newY = 0;
+                        if (newY < -maxScroll) newY = -maxScroll;
+                        var tStr = 'translate3d(0px, ' + Math.round(newY) + 'px, 0px)';
+                        sBody.style['-webkit-transform'] = tStr;
+                        sBody.style['transform'] = tStr;
+                    } else if (curTransform) {
+                        sBody.style['transform'] = curTransform;
+                    }
+                }
+            } catch (eFb) {}
+        }
+
         function updateQueueStatus() {
             var valEl = html.find('.customs-ts-autotest-val');
             if (!valEl.length) return;
@@ -3094,7 +3182,7 @@
                         inHeader = false;
                         lastFocused = this;
                         lastFocusedCard = this;
-                        try { scroll.update(this, true); } catch (eUp) {}
+                        updateScrollTo(this);
                         checkCardMarquee(this);
 
                         if (focusTimer) clearTimeout(focusTimer);
@@ -3140,7 +3228,8 @@
                     lastFocused = first;
                     Lampa.Controller.collectionSet(scroll.render());
                     Lampa.Controller.collectionFocus(first, scroll.render());
-                    try { scroll.update(first, true); } catch (eUp) {}
+                    $(first).trigger('hover:focus');
+                    updateScrollTo(first);
                 }
             }
         }
@@ -3191,7 +3280,8 @@
                             lastFocusedCard = target;
                             lastFocused = target;
                             Lampa.Controller.collectionFocus(target, scroll.render());
-                            try { scroll.update(target, true); } catch (eUpd) {}
+                            $(target).trigger('hover:focus');
+                            updateScrollTo(target);
                         }
                     }
                 },
@@ -3211,7 +3301,8 @@
                                 lastFocusedCard = prevCard;
                                 lastFocused = prevCard;
                                 Lampa.Controller.collectionFocus(prevCard, scroll.render());
-                                try { scroll.update(prevCard, true); } catch (eU) {}
+                                $(prevCard).trigger('hover:focus');
+                                updateScrollTo(prevCard);
                                 return;
                             }
                         }
@@ -3231,7 +3322,8 @@
                             lastFocusedCard = target;
                             lastFocused = target;
                             Lampa.Controller.collectionFocus(target, scroll.render());
-                            try { scroll.update(target, true); } catch (eDn) {}
+                            $(target).trigger('hover:focus');
+                            updateScrollTo(target);
                         }
                     } else {
                         var allCards = scroll.render().find('.customs-torrent-card.selector, .customs-ts-card.selector');
@@ -3242,7 +3334,8 @@
                                 lastFocusedCard = nextCard;
                                 lastFocused = nextCard;
                                 Lampa.Controller.collectionFocus(nextCard, scroll.render());
-                                try { scroll.update(nextCard, true); } catch (eN) {}
+                                $(nextCard).trigger('hover:focus');
+                                updateScrollTo(nextCard);
                                 return;
                             }
                         }
@@ -4150,11 +4243,13 @@
             '.customs-ts-ctrl.active{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#ffffff;font-weight:700;}',
             '.customs-ts-ctrl__label{color:#9ca3af;font-size:.9em;}',
             '.customs-ts-ctrl__val{color:#fff;font-weight:700;}',
-            '.customs-ts-body{flex:1 1 auto !important;position:relative !important;width:100% !important;height:100% !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
+            '.customs-ts-body{flex:1 1 0px !important;min-height:0 !important;position:relative !important;width:100% !important;overflow:hidden !important;padding:0 !important;box-sizing:border-box !important;}',
             '.customs-ts-body .scroll{position:absolute !important;top:0 !important;left:0 !important;right:0 !important;bottom:0 !important;width:100% !important;height:100% !important;overflow:hidden !important;display:block !important;}',
             '.customs-ts-body .scroll::-webkit-scrollbar{display:none !important;width:0 !important;}',
-            '.customs-ts-body .scroll__content{width:100% !important;padding:1.2em 2.2em 6em !important;box-sizing:border-box !important;}',
-            '.customs-ts-body .scroll__body{width:100% !important;display:flex !important;flex-direction:column !important;gap:.8em !important;box-sizing:border-box !important;}',
+            '.customs-ts-body .scroll__content{width:100% !important;height:100% !important;max-height:100% !important;padding:1.2em 2.2em 6em !important;box-sizing:border-box !important;}',
+            '.customs-ts-body .scroll__body{width:100% !important;height:auto !important;min-height:100% !important;display:flex !important;flex-direction:column !important;gap:.8em !important;box-sizing:border-box !important;transition:transform .25s ease-out,-webkit-transform .25s ease-out !important;will-change:transform !important;}',
+            '.customs-filmix-tag.tag--season{background:rgba(37,99,235,.28) !important;color:#bfdbfe !important;border:1px solid rgba(96,165,250,.5) !important;font-weight:800 !important;letter-spacing:.02em !important;}',
+            '.customs-filmix-item.focus .customs-filmix-tag.tag--season{background:rgba(37,99,235,.45) !important;color:#ffffff !important;border-color:rgba(147,197,253,.9) !important;box-shadow:0 0 12px rgba(59,130,246,.5) !important;}',
             '@keyframes customs-live-pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(1.2);}}',
             '.customs-ts-empty{padding:4em 2em;text-align:center;color:#9ca3af;}',
             '.customs-ts-empty__icon{font-size:3em;margin-bottom:.4em;}',
