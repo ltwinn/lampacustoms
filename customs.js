@@ -8,8 +8,8 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.6.1';
-    var PLUGIN_BUILD = '11.11 23:30';
+    var PLUGIN_VERSION = '1.6.2';
+    var PLUGIN_BUILD = '13.11 13:45';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     // Вбудований активатор можливостей TorrServer (аналог etor / cub.rip/plugin/etor)
@@ -809,11 +809,20 @@
     function fixStreamUrl(url) {
         if (!url) return '';
         var u = url;
-        if (u.indexOf('//') === 0) {
-            u = (window.location && window.location.protocol === 'https:' ? 'https:' : 'http:') + u;
-        } else if (window.location && window.location.protocol === 'https:' && u.indexOf('http://') === 0) {
-            u = u.replace('http://', 'https://');
+        var preferHttp = false;
+        try {
+            preferHttp = (Lampa.Storage && Lampa.Storage.field) ? (Lampa.Storage.field('online_mod_prefer_http') === true) : false;
+        } catch (e) {
+            preferHttp = false;
         }
+        if (u.indexOf('//') === 0) {
+            u = (preferHttp ? 'http:' : (window.location && window.location.protocol === 'https:' ? 'https:' : 'http:')) + u;
+        } else if (preferHttp && u.indexOf('https://') === 0) {
+            u = u.replace('https://', 'http://');
+        }
+        // ВАЖЛИВО: Не замінюємо http:// на https:// для потоків Filmix!
+        // CDN-сервери Filmix для 4K (2160p) працюють виключно по HTTP; примусовий HTTPS
+        // викликає помилку 404 (Not Found) або скидання TLS-з'єднання на телевізорах та плеєрах.
         return u;
     }
 
@@ -835,13 +844,13 @@
             status = {};
         }
 
-        if (status && status.is_pro_plus) return 2160;
-        if (status && status.is_pro) return 1080;
+        if (status && (status.is_pro_plus || status.pro_plus)) return 2160;
+        if (status && (status.is_pro || status.pro)) return 1440;
         if (window.mod_filmix && window.mod_filmix.max_qualitie) {
             return window.mod_filmix.max_qualitie;
         }
         var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
-        if (token) return 1080; // Безпечний ліміт для Filmix PRO (1080p, захист від 404 на 4K)
+        if (token) return 1440; // Filmix PRO дозволяє перегляд до 1440p (2K)
         return 720;
     }
 
@@ -1016,7 +1025,7 @@
                         var qualityMap = {};
                         finalQualities.forEach(function (q) {
                             var qUrl = m ? item.link.replace(/\[[\d,]*\]/i, q) : (item.link.indexOf('%s') !== -1 ? item.link.replace(/%s/i, q) : item.link);
-                            qualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
+                            qualityMap['\u200B' + q + 'p'] = fixStreamUrl(qUrl);
                         });
 
                         finalQualities.forEach(function (q) {
@@ -1195,21 +1204,9 @@
     }
 
     function probeFileSize(url, callback) {
-        if (!url || typeof XMLHttpRequest === 'undefined') return;
-        try {
-            var xhr = new XMLHttpRequest();
-            xhr.open('HEAD', fixStreamUrl(url), true);
-            xhr.timeout = 3500;
-            xhr.onload = function () {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    var cl = parseInt(xhr.getResponseHeader('Content-Length'));
-                    if (cl && cl > 100 * 1024 * 1024) {
-                        callback(cl);
-                    }
-                }
-            };
-            xhr.send();
-        } catch (e) {}
+        // Вимкнено для прямих медіа-потоків Filmix:
+        // надсилання неавторизованих HEAD-запитів блокується CORS і може інвалідувати токени CDN
+        return;
     }
 
     function escapeHtml(str) {
@@ -1810,13 +1807,18 @@
                         var epQualityMap = {};
                         (v.qualities || [currentQuality]).forEach(function (q) {
                             var qUrl = ep.link.indexOf('%s') !== -1 ? ep.link.replace(/%s/i, q) : ep.link;
-                            epQualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
+                            epQualityMap['\u200B' + q + 'p'] = fixStreamUrl(qUrl);
                         });
 
                         var targetPlayUrl = fixStreamUrl(playUrl);
                         if (!targetPlayUrl && epQualityMap) {
                             var qk = Object.keys(epQualityMap);
                             if (qk.length) targetPlayUrl = epQualityMap[qk[0]];
+                        }
+
+                        var reserveEpUrl = '';
+                        if (currentQuality > 1080 && epQualityMap) {
+                            reserveEpUrl = epQualityMap['\u200B1440p'] || epQualityMap['\u200B1080p'] || epQualityMap['\u200B720p'] || '';
                         }
 
                         var epTimeline = getEpisodeTimeline(ep, movie);
@@ -1827,26 +1829,46 @@
                             timeline: epTimeline
                         };
 
+                        if (reserveEpUrl && reserveEpUrl !== targetPlayUrl) {
+                            first.url_reserve = reserveEpUrl;
+                            first.error = function (w, retry) {
+                                var fallbackLabel = (epQualityMap && epQualityMap['\u200B1440p']) ? '2K (1440p)' : '1080p';
+                                Lampa.Noty.show('Потік серії ' + meta.qLabel + ' недоступний (404). Автоперемикання на ' + fallbackLabel + '...');
+                                if (typeof retry === 'function') retry(reserveEpUrl);
+                            };
+                        }
+
                         var playlist = episodes.map(function (e) {
                             var eQualityMap = {};
                             (v.qualities || [currentQuality]).forEach(function (q) {
                                 var qUrl = e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, q) : e.link;
-                                eQualityMap['\u200B' + (q >= 2160 ? '4K UHD' : q + 'p')] = fixStreamUrl(qUrl);
+                                eQualityMap['\u200B' + q + 'p'] = fixStreamUrl(qUrl);
                             });
                             var eUrl = fixStreamUrl(e.link.indexOf('%s') !== -1 ? e.link.replace(/%s/i, currentQuality) : e.link);
                             if (!eUrl && eQualityMap) {
                                 var eqk = Object.keys(eQualityMap);
                                 if (eqk.length) eUrl = eQualityMap[eqk[0]];
                             }
+                            var itemReserve = '';
+                            if (currentQuality > 1080 && eQualityMap) {
+                                itemReserve = eQualityMap['\u200B1440p'] || eQualityMap['\u200B1080p'] || eQualityMap['\u200B720p'] || '';
+                            }
                             var eInfo = (tmdbSeasonCache[movie.id + '_' + s.id] && tmdbSeasonCache[movie.id + '_' + s.id][e.episode]) || null;
                             var eTitle = (eInfo && eInfo.name) ? (e.episode + '. ' + eInfo.name) : (e.episode + ' серія');
                             var eTimeline = getEpisodeTimeline(e, movie);
-                            return {
+                            var cell = {
                                 title: (movie.title || movie.name) + ' — ' + meta.cleanVoice + ' — ' + eTitle + ' [' + meta.qLabel + ']',
                                 url: eUrl,
                                 quality: eQualityMap,
                                 timeline: eTimeline
                             };
+                            if (itemReserve && itemReserve !== eUrl) {
+                                cell.url_reserve = itemReserve;
+                                cell.error = function (w, retry) {
+                                    if (typeof retry === 'function') retry(itemReserve);
+                                };
+                            }
+                            return cell;
                         });
 
                         if (playlist.length > 1) {
@@ -1972,12 +1994,29 @@
 
                 el.on('hover:enter', function () {
                     last = el[0];
-                    Lampa.Player.play({
+                    var playUrl = fixStreamUrl(v.url);
+                    var reserveUrl = '';
+                    if (v.raw_quality > 1080 && v.qualityMap) {
+                        reserveUrl = v.qualityMap['\u200B1440p'] || v.qualityMap['\u200B1080p'] || v.qualityMap['\u200B720p'] || '';
+                    }
+
+                    var playData = {
                         title: (movie.title || movie.name) + ' — ' + v.voice + ' [' + meta.qLabel + ']',
-                        url: fixStreamUrl(v.url),
+                        url: playUrl,
                         quality: v.qualityMap || null,
                         timeline: movTimeline || movie.timeline
-                    });
+                    };
+
+                    if (reserveUrl && reserveUrl !== playUrl) {
+                        playData.url_reserve = reserveUrl;
+                        playData.error = function (w, retry) {
+                            var fallbackLabel = (v.qualityMap && v.qualityMap['\u200B1440p']) ? '2K (1440p)' : '1080p';
+                            Lampa.Noty.show('Потік ' + meta.qLabel + ' недоступний (404). Автоперемикання на ' + fallbackLabel + '...');
+                            if (typeof retry === 'function') retry(reserveUrl);
+                        };
+                    }
+
+                    Lampa.Player.play(playData);
                 });
 
                 scroll.append(el[0]);
