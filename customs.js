@@ -8,8 +8,8 @@
 (function () {
     'use strict';
 
-    var PLUGIN_VERSION = '1.6.2';
-    var PLUGIN_BUILD = '13.11 13:45';
+    var PLUGIN_VERSION = '1.6.3';
+    var PLUGIN_BUILD = '13.11 14:10';
     window.lampa_customs_plugin = PLUGIN_VERSION;
 
     // Вбудований активатор можливостей TorrServer (аналог etor / cub.rip/plugin/etor)
@@ -844,14 +844,80 @@
             status = {};
         }
 
-        if (status && (status.is_pro_plus || status.pro_plus)) return 2160;
-        if (status && (status.is_pro || status.pro)) return 1440;
+        var isProPlus = Boolean(status && (status.is_pro_plus === true || status.is_pro_plus === 1 || status.is_pro_plus === '1' || status.pro_plus));
+        var isPro = Boolean(status && (status.is_pro === true || status.is_pro === 1 || status.is_pro === '1' || status.pro));
+
+        if (isProPlus) return 2160;
+        if (isPro) return 1440;
         if (window.mod_filmix && window.mod_filmix.max_qualitie) {
             return window.mod_filmix.max_qualitie;
         }
         var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
-        if (token) return 1440; // Filmix PRO дозволяє перегляд до 1440p (2K)
+        if (token) return 1440; // Безпечний ліміт для Filmix PRO (1440p)
         return 720;
+    }
+
+    var filmixAuthData = {
+        dev_id: '',
+        dev_token: '',
+        token: '',
+        authenticated: false,
+        authTime: 0
+    };
+
+    function ensureFilmixAuth(callback) {
+        var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
+
+        if (!filmixAuthData.dev_id) {
+            var saved = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('customs_filmix_dev_id', '') + '') : '';
+            if (saved && saved.length === 16) {
+                filmixAuthData.dev_id = saved;
+            } else {
+                filmixAuthData.dev_id = randomHex(16);
+                if (Lampa.Storage && Lampa.Storage.set) {
+                    Lampa.Storage.set('customs_filmix_dev_id', filmixAuthData.dev_id);
+                }
+            }
+        }
+
+        var devToken = '?user_dev_id=' + filmixAuthData.dev_id + '&user_dev_name=Xiaomi&user_dev_token=' + (token || 'aaaabbbbccccddddeeeeffffaaaabbbb') + '&user_dev_vendor=Xiaomi&user_dev_os=14&user_dev_apk=2.2.0&app_lang=ru-rRU';
+        filmixAuthData.dev_token = devToken;
+
+        // Якщо токен не змінився і сесія вже авторизована менше ніж 15 хв тому
+        if (!token || (filmixAuthData.authenticated && filmixAuthData.token === token && (Date.now() - filmixAuthData.authTime < 1000 * 60 * 15))) {
+            return callback(devToken);
+        }
+
+        // Авторизуємо dev_id на сервері Filmix через user_profile
+        // Це критично для отримання валідних підписів для 4K (2160p) потоків на CDN
+        var profileUrl = 'http://filmixapp.cyou/api/v2/user_profile' + devToken;
+        var req = new Lampa.Reguest();
+        req.timeout(10000);
+        req.native(proxyFilmixUrl(profileUrl), function (resp) {
+            var found = resp;
+            if (typeof found === 'string') {
+                try { found = JSON.parse(found); } catch (e) { found = null; }
+            }
+            if (found && found.user_data) {
+                if (Lampa.Storage && Lampa.Storage.set) {
+                    Lampa.Storage.set('filmix_status', found.user_data);
+                }
+                if (!window.mod_filmix) {
+                    window.mod_filmix = {};
+                }
+                var maxQ = 720;
+                if (found.user_data.is_pro) maxQ = 1440;
+                if (found.user_data.is_pro_plus) maxQ = 2160;
+                window.mod_filmix.max_qualitie = maxQ;
+                filmixAuthData.authenticated = true;
+                filmixAuthData.token = token;
+                filmixAuthData.authTime = Date.now();
+                filmixMemoryCache = {}; // Очищаємо кеш старих посилань
+            }
+            callback(devToken);
+        }, function () {
+            callback(devToken);
+        });
     }
 
     // Точний формат проксі Cloudflare Worker, як у online_mod
@@ -926,43 +992,41 @@
             return done(cached);
         }
 
-        var token = (Lampa.Storage && Lampa.Storage.get) ? (Lampa.Storage.get('filmix_token', '') + '') : '';
-        var dev_id = randomHex(16);
-        var dev_token = '?user_dev_id=' + dev_id + '&user_dev_name=Xiaomi&user_dev_token=' + (token || 'aaaabbbbccccddddeeeeffffaaaabbbb') + '&user_dev_vendor=Xiaomi&user_dev_os=14&user_dev_apk=2.2.0&app_lang=ru-rRU';
+        ensureFilmixAuth(function (dev_token) {
+            var title1 = cleanTitle(movie.title || movie.name);
+            var title2 = cleanTitle(movie.original_title || movie.original_name);
 
-        var title1 = cleanTitle(movie.title || movie.name);
-        var title2 = cleanTitle(movie.original_title || movie.original_name);
-
-        function querySearch(searchWord, callback) {
-            if (!searchWord) return callback([]);
-            var searchUrl = 'http://filmixapp.cyou/api/v2/search' + dev_token + '&story=' + encodeURIComponent(searchWord);
-            var req = new Lampa.Reguest();
-            req.timeout(12000);
-            req.native(proxyFilmixUrl(searchUrl), function (resp) {
-                var json = resp;
-                if (typeof json === 'string') {
-                    try { json = JSON.parse(json); } catch (e) { json = null; }
-                }
-                callback(Array.isArray(json) ? json : []);
-            }, function () {
-                callback([]);
-            });
-        }
-
-        querySearch(title1, function (list) {
-            if (list.length) {
-                selectAndLoadPost(list, dev_token, movie, done);
-            } else if (title2 && title2 !== title1) {
-                querySearch(title2, function (list2) {
-                    if (list2.length) {
-                        selectAndLoadPost(list2, dev_token, movie, done);
-                    } else {
-                        done([]);
+            function querySearch(searchWord, callback) {
+                if (!searchWord) return callback([]);
+                var searchUrl = 'http://filmixapp.cyou/api/v2/search' + dev_token + '&story=' + encodeURIComponent(searchWord);
+                var req = new Lampa.Reguest();
+                req.timeout(12000);
+                req.native(proxyFilmixUrl(searchUrl), function (resp) {
+                    var json = resp;
+                    if (typeof json === 'string') {
+                        try { json = JSON.parse(json); } catch (e) { json = null; }
                     }
+                    callback(Array.isArray(json) ? json : []);
+                }, function () {
+                    callback([]);
                 });
-            } else {
-                done([]);
             }
+
+            querySearch(title1, function (list) {
+                if (list.length) {
+                    selectAndLoadPost(list, dev_token, movie, done);
+                } else if (title2 && title2 !== title1) {
+                    querySearch(title2, function (list2) {
+                        if (list2.length) {
+                            selectAndLoadPost(list2, dev_token, movie, done);
+                        } else {
+                            done([]);
+                        }
+                    });
+                } else {
+                    done([]);
+                }
+            });
         });
     }
 
@@ -1831,11 +1895,6 @@
 
                         if (reserveEpUrl && reserveEpUrl !== targetPlayUrl) {
                             first.url_reserve = reserveEpUrl;
-                            first.error = function (w, retry) {
-                                var fallbackLabel = (epQualityMap && epQualityMap['\u200B1440p']) ? '2K (1440p)' : '1080p';
-                                Lampa.Noty.show('Потік серії ' + meta.qLabel + ' недоступний (404). Автоперемикання на ' + fallbackLabel + '...');
-                                if (typeof retry === 'function') retry(reserveEpUrl);
-                            };
                         }
 
                         var playlist = episodes.map(function (e) {
@@ -1864,9 +1923,6 @@
                             };
                             if (itemReserve && itemReserve !== eUrl) {
                                 cell.url_reserve = itemReserve;
-                                cell.error = function (w, retry) {
-                                    if (typeof retry === 'function') retry(itemReserve);
-                                };
                             }
                             return cell;
                         });
@@ -2009,11 +2065,6 @@
 
                     if (reserveUrl && reserveUrl !== playUrl) {
                         playData.url_reserve = reserveUrl;
-                        playData.error = function (w, retry) {
-                            var fallbackLabel = (v.qualityMap && v.qualityMap['\u200B1440p']) ? '2K (1440p)' : '1080p';
-                            Lampa.Noty.show('Потік ' + meta.qLabel + ' недоступний (404). Автоперемикання на ' + fallbackLabel + '...');
-                            if (typeof retry === 'function') retry(reserveUrl);
-                        };
                     }
 
                     Lampa.Player.play(playData);
