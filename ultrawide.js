@@ -1,20 +1,23 @@
 /*
- * Lampa 21:9 UltraWide Cinema Plugin (ultrawide.js)
+ * Lampa 21:9 UltraWide Cinema & Phone Remote Bridge (ultrawide.js)
  * 
  * 1. Cinemascope Zoom (1.33x): бездоганне заповнення екрана 21:9 для фільмів у контейнері 16:9 із чорними смугами.
  * 2. Режими пропорцій: Cinemascope (1.33x), 2:1 Univisium (1.15x), Нативний 21:9 (1:1), 16:9 Оригінал (Центр), Заповнити (Fill).
  * 3. Кнопка швидкого перемикання [ 21:9 ] у панелі плеєра Lampa з підтримкою пульта ТБ.
  * 4. Розумне автовизначення: автоматичне масштабування фільмів та центрування серіалів.
  * 5. Адаптивний інтерфейс каталогу Lampa під широкі монітори (2560/3440 px).
+ * 6. Air Mouse, тачпад та введення тексту зі смартфона: пряме керування мишкою та миттєвий пошук фільмів телефоном без пульта.
  * 
  * Сумісність з ES5 для Smart TV (Samsung Tizen, LG webOS, Android TV).
  */
 (function () {
     'use strict';
 
-    var PLUGIN_NAME = '21:9 UltraWide Cinema';
-    var PLUGIN_VERSION = '1.0.0';
+    var PLUGIN_NAME = '21:9 UltraWide & Phone Remote';
+    var PLUGIN_VERSION = '1.1.0';
     var COMPONENT_NAME = 'lampa_ultrawide';
+    var REMOTE_WS_HOST = '192.168.31.106';
+    var REMOTE_WS_PORT = 8081;
 
     var MODES = [
         { id: 'cinemascope', label: '21:9 🎬', title: '21:9 Cinemascope (Кроп смуг 1.33x)', scale: 1.33333 },
@@ -46,7 +49,7 @@
     }
 
     /* -------------------------------------------------------------
-     *  Масштабування відео (HTML5 Video & Tizen AVPlay)
+     *  1. Масштабування відео (HTML5 Video & Tizen AVPlay)
      * ------------------------------------------------------------- */
     function applyVideoScale(mode, silent) {
         if (!getSetting('ultrawide_enabled', true)) return;
@@ -60,7 +63,7 @@
             scale = 1.15;
         }
 
-        // 1. Стандартний HTML5 <video> елемент
+        // HTML5 <video>
         var video = document.querySelector('#player video, .player-video__video, .player-video video, video');
         if (video) {
             if (currentMode === 'cinemascope' || currentMode === 'univisium') {
@@ -83,7 +86,7 @@
             }
         }
 
-        // 2. Tizen нативний відеоплеєр (webapis.avplay)
+        // Tizen AVPlay (webapis.avplay)
         if (window.webapis && webapis.avplay && typeof webapis.avplay.setDisplayRect === 'function') {
             try {
                 var screenW = window.innerWidth || 2560;
@@ -144,13 +147,9 @@
         }
     }
 
-    /* -------------------------------------------------------------
-     *  Вбудовування кнопки у панель плеєра
-     * ------------------------------------------------------------- */
     function injectPlayerButton() {
         if (!getSetting('ultrawide_button', true)) return;
 
-        // Панель кнопок плеєра справа
         var targetBox = document.querySelector('.player-panel__right .player-panel__box-buttons');
         if (!targetBox) targetBox = document.querySelector('.player-panel__right');
         if (!targetBox) return;
@@ -192,7 +191,6 @@
         targetBox.insertBefore(btn, targetBox.firstChild);
         updateButtonUi();
 
-        // Оновлюємо колекцію навігації для пульта
         if (window.Lampa && Lampa.Controller && Lampa.Controller.collectionAdd) {
             try {
                 Lampa.Controller.collectionAdd($('.player-panel .selector'));
@@ -200,9 +198,6 @@
         }
     }
 
-    /* -------------------------------------------------------------
-     *  Розумне визначення (Фільм vs Серіал)
-     * ------------------------------------------------------------- */
     function detectInitialMode(playData) {
         if (!getSetting('ultrawide_auto_detect', true)) {
             return getSetting('ultrawide_movie_mode', 'cinemascope');
@@ -215,16 +210,9 @@
             if (playData.movie && (playData.movie.number_of_seasons || playData.movie.first_air_date)) isSerial = true;
         }
 
-        if (isSerial) {
-            return getSetting('ultrawide_serial_mode', 'original');
-        } else {
-            return getSetting('ultrawide_movie_mode', 'cinemascope');
-        }
+        return isSerial ? getSetting('ultrawide_serial_mode', 'original') : getSetting('ultrawide_movie_mode', 'cinemascope');
     }
 
-    /* -------------------------------------------------------------
-     *  Життєвий цикл плеєра
-     * ------------------------------------------------------------- */
     function onPlayerStart(playData) {
         var startMode = detectInitialMode(playData);
         currentMode = startMode;
@@ -267,7 +255,178 @@
     }
 
     /* -------------------------------------------------------------
-     *  Адаптація інтерфейсу каталогу Lampa (CSS)
+     *  2. Phone Remote Bridge (Air Mouse, Touchpad & Phone Typing)
+     * ------------------------------------------------------------- */
+    var cursorX = window.innerWidth / 2;
+    var cursorY = window.innerHeight / 2;
+    var cursorEl = null;
+    var cursorHideTimeout = null;
+    var lastHovered = null;
+    var remoteWs = null;
+
+    function createCursorElement() {
+        if (cursorEl) return cursorEl;
+        cursorEl = document.createElement('div');
+        cursorEl.id = 'lampa-remote-cursor';
+        cursorEl.style.position = 'fixed';
+        cursorEl.style.width = '24px';
+        cursorEl.style.height = '24px';
+        cursorEl.style.borderRadius = '50%';
+        cursorEl.style.background = 'radial-gradient(circle, rgba(0,229,255,0.95) 0%, rgba(0,180,216,0.6) 60%, rgba(0,0,0,0) 100%)';
+        cursorEl.style.border = '2px solid #ffffff';
+        cursorEl.style.boxShadow = '0 0 16px rgba(0, 229, 255, 0.9), 0 0 30px rgba(0, 229, 255, 0.5)';
+        cursorEl.style.pointerEvents = 'none';
+        cursorEl.style.zIndex = '9999999';
+        cursorEl.style.transform = 'translate3d(-100px, -100px, 0)';
+        cursorEl.style.transition = 'transform 0.04s ease-out, opacity 0.3s ease';
+        cursorEl.style.opacity = '0';
+        document.body.appendChild(cursorEl);
+        return cursorEl;
+    }
+
+    function showCursor() {
+        var el = createCursorElement();
+        el.style.opacity = '1';
+        clearTimeout(cursorHideTimeout);
+        cursorHideTimeout = setTimeout(function () {
+            if (el) el.style.opacity = '0';
+            if (lastHovered) {
+                $(lastHovered).removeClass('focus');
+                lastHovered = null;
+            }
+        }, 6000);
+    }
+
+    function handleRemoteMessage(msg) {
+        if (!msg || !msg.type) return;
+
+        if (msg.type === 'move') {
+            showCursor();
+            var dx = (parseFloat(msg.dx) || 0) * 1.25;
+            var dy = (parseFloat(msg.dy) || 0) * 1.25;
+            cursorX = Math.max(10, Math.min(window.innerWidth - 10, cursorX + dx));
+            cursorY = Math.max(10, Math.min(window.innerHeight - 10, cursorY + dy));
+            if (cursorEl) {
+                cursorEl.style.transform = 'translate3d(' + (cursorX - 12) + 'px,' + (cursorY - 12) + 'px, 0)';
+            }
+
+            // Інтерактивне підсвічування карток / кнопок під курсором
+            var target = document.elementFromPoint(cursorX, cursorY);
+            if (target) {
+                var selectable = target.closest('.selector, .card, .button, input, textarea, .settings-param');
+                if (selectable && selectable !== lastHovered) {
+                    if (lastHovered) $(lastHovered).removeClass('focus');
+                    lastHovered = selectable;
+                    $(selectable).addClass('focus');
+                } else if (!selectable && lastHovered) {
+                    $(lastHovered).removeClass('focus');
+                    lastHovered = null;
+                }
+            }
+        } else if (msg.type === 'click') {
+            showCursor();
+            if (cursorEl) {
+                cursorEl.style.transform = 'translate3d(' + (cursorX - 12) + 'px,' + (cursorY - 12) + 'px, 0) scale(0.7)';
+                setTimeout(function () {
+                    if (cursorEl) cursorEl.style.transform = 'translate3d(' + (cursorX - 12) + 'px,' + (cursorY - 12) + 'px, 0) scale(1)';
+                }, 120);
+            }
+
+            var clickTarget = document.elementFromPoint(cursorX, cursorY);
+            if (clickTarget) {
+                var btnOrCard = clickTarget.closest('.selector, .card, .button, a, input, textarea, button') || clickTarget;
+                btnOrCard.click();
+                if (window.Lampa && Lampa.Controller && Lampa.Controller.collectionFocus) {
+                    try { Lampa.Controller.collectionFocus(btnOrCard); } catch(eFocus) {}
+                }
+            }
+        } else if (msg.type === 'text') {
+            var text = msg.text || '';
+            if (!text) return;
+
+            var active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+                active.value = text;
+                active.dispatchEvent(new Event('input', { bubbles: true }));
+                active.dispatchEvent(new Event('change', { bubbles: true }));
+                if (window.Lampa && Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show('⌨️ Введено: ' + text);
+                }
+            } else {
+                // Швидкий пошук у Lampa одразу з телефону
+                if (window.Lampa && Lampa.Activity && Lampa.Activity.push) {
+                    Lampa.Activity.push({
+                        url: '',
+                        title: (window.Lampa && Lampa.Lang ? Lampa.Lang.translate('title_search') : 'Пошук') + ': ' + text,
+                        component: 'search',
+                        query: encodeURIComponent(text)
+                    });
+                    if (window.Lampa && Lampa.Noty && Lampa.Noty.show) {
+                        Lampa.Noty.show('🔍 Пошук з телефону: ' + text);
+                    }
+                }
+            }
+        } else if (msg.type === 'key') {
+            var key = msg.key;
+            if (!window.Lampa || !Lampa.Controller) return;
+
+            if (key === 'ArrowUp') {
+                try { Lampa.Controller.move('up'); } catch(eK) {}
+            } else if (key === 'ArrowDown') {
+                try { Lampa.Controller.move('down'); } catch(eK) {}
+            } else if (key === 'ArrowLeft') {
+                try { Lampa.Controller.move('left'); } catch(eK) {}
+            } else if (key === 'ArrowRight') {
+                try { Lampa.Controller.move('right'); } catch(eK) {}
+            } else if (key === 'Enter') {
+                try { Lampa.Controller.enter(); } catch(eK) {}
+            } else if (key === 'Escape' || key === 'Backspace') {
+                if (Lampa.Activity && Lampa.Activity.backward) {
+                    try { Lampa.Activity.backward(); } catch(eB) {}
+                }
+            }
+        } else if (msg.type === 'scroll') {
+            var dyScroll = msg.deltaY || 300;
+            window.scrollBy({ top: dyScroll, behavior: 'smooth' });
+        }
+    }
+
+    function initRemoteReceiver() {
+        if (!getSetting('ultrawide_remote_bridge', true)) return;
+
+        var host = getSetting('ultrawide_remote_ip', REMOTE_WS_HOST);
+        var url = 'ws://' + host + ':' + REMOTE_WS_PORT;
+
+        function connect() {
+            try {
+                remoteWs = new WebSocket(url);
+                remoteWs.onopen = function () {
+                    try {
+                        remoteWs.send(JSON.stringify({ type: 'register_display', client: 'lampa' }));
+                    } catch(eSend) {}
+                };
+                remoteWs.onmessage = function (event) {
+                    try {
+                        var parsed = JSON.parse(event.data);
+                        handleRemoteMessage(parsed);
+                    } catch(eMsg) {}
+                };
+                remoteWs.onclose = function () {
+                    setTimeout(connect, 4000);
+                };
+                remoteWs.onerror = function () {
+                    remoteWs.close();
+                };
+            } catch(eConn) {
+                setTimeout(connect, 6000);
+            }
+        }
+
+        connect();
+    }
+
+    /* -------------------------------------------------------------
+     *  3. Адаптація інтерфейсу каталогу Lampa (CSS)
      * ------------------------------------------------------------- */
     function injectStyles() {
         if (document.getElementById('lampa-ultrawide-styles')) return;
@@ -277,30 +436,16 @@
         style.type = 'text/css';
 
         var css = [
-            /* Підсвічування кнопки 21:9 у фокусі пульта */
             '.player-panel__ultrawide.focus { background: #ffd600 !important; color: #000 !important; transform: scale(1.08); box-shadow: 0 0 1em rgba(255,214,0,0.5); }',
-            
-            /* Субтитри: безпечне позиціонування всередині 21:9 кадру */
             '.player-subtitles, .player-video__subtitles { bottom: 3.8em !important; font-size: 1.15em !important; text-shadow: 0 2px 4px rgba(0,0,0,0.95); }',
-
-            /* Адаптація UI каталогу під Ultrawide екрани */
             '@media (min-aspect-ratio: 2/1) {',
-                /* Повне використання ширини для скролу карток */
                 '.scroll__content { max-width: 100% !important; }',
                 '.items-line { width: 100% !important; }',
-                
-                /* Картки фільмів: оптимальний розмір для 8-10 карток у рядку на 21:9 */
                 '.card { width: 11.2% !important; margin-right: 1.2% !important; }',
-                
-                /* Широкий повнорозмірний бекдроп у картці фільму */
                 '.full-start__bg { background-size: cover !important; background-position: center 25% !important; }',
                 '.full-start__bg:after { background: linear-gradient(90deg, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.72) 40%, rgba(0,0,0,0.2) 75%, rgba(0,0,0,0) 100%) !important; }',
-                
-                /* Акуратна ширина діалогів, модалок і налаштувань (не розповзаються на 2.5 метри) */
                 '.modal__content { max-width: 62em !important; }',
                 '.settings { max-width: 65em !important; }',
-                
-                /* Панель плеєра на весь екран */
                 '.player-panel { max-width: 100% !important; padding: 0 3em !important; }',
             '}'
         ].join('\n');
@@ -310,7 +455,7 @@
     }
 
     /* -------------------------------------------------------------
-     *  Налаштування Lampa (SettingsApi)
+     *  4. Налаштування Lampa (SettingsApi)
      * ------------------------------------------------------------- */
     function addSettings() {
         if (!window.Lampa || !Lampa.SettingsApi) return;
@@ -331,6 +476,19 @@
             field: {
                 name: 'Увімкнути режим 21:9 UltraWide',
                 description: 'Активація масштабування кіно та інтерфейсу для 21:9 монітора'
+            }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT_NAME,
+            param: {
+                name: 'ultrawide_remote_bridge',
+                type: 'trigger',
+                default: true
+            },
+            field: {
+                name: 'Пульт зі смартфона (Air Mouse & Пошук)',
+                description: 'Керування курсором миші та миттєвий пошук фільмів телефоном'
             }
         });
 
@@ -369,7 +527,7 @@
             },
             field: {
                 name: 'Формат для серіалів',
-                description: 'Для телесеріалів 16:9 залишає чисті бічні смуги без спотворення пропорцій'
+                description: 'Для серіалів 16:9 залишає чисті бічні смуги без спотворення пропорцій'
             }
         });
 
@@ -419,9 +577,6 @@
         });
     }
 
-    /* -------------------------------------------------------------
-     *  Реєстрація у списку плагінів Lampa
-     * ------------------------------------------------------------- */
     function registerManifest() {
         if (!window.Lampa || !Lampa.Manifest) return;
 
@@ -429,7 +584,7 @@
             type: 'video',
             version: PLUGIN_VERSION,
             name: PLUGIN_NAME,
-            description: 'Cinemascope 21:9 зум та адаптивний UI для моніторів',
+            description: 'Cinemascope 21:9 зум, Air Mouse та введення тексту зі смартфона',
             component: COMPONENT_NAME
         };
 
@@ -456,21 +611,20 @@
     }
 
     /* -------------------------------------------------------------
-     *  Ініціалізація
+     *  5. Запуск
      * ------------------------------------------------------------- */
     function init() {
         injectStyles();
         addSettings();
         registerManifest();
+        initRemoteReceiver();
 
-        // Слухачі подій плеєра
         if (window.Lampa && Lampa.Player && Lampa.Player.listener) {
             Lampa.Player.listener.follow('start', onPlayerStart);
             Lampa.Player.listener.follow('ready', onPlayerStart);
             Lampa.Player.listener.follow('destroy', onPlayerDestroy);
         }
 
-        // На випадок глобального лісенера Lampa
         if (window.Lampa && Lampa.Listener) {
             Lampa.Listener.follow('player', function (e) {
                 if (e.type === 'start' || e.type === 'ready') {
